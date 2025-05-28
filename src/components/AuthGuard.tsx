@@ -2,18 +2,19 @@
 import React from 'react'
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { getCookie } from '@/utils/cookies'
 
 export default function AuthGuard({
     children,
     requiredRole
 }: {
     children: React.ReactNode
-    requiredRole?: 'kierownik' | 'kucharz' | 'kelner'
+    requiredRole?: 'kierownik' | 'kelner' | 'kucharz'
 }) {
     const router = useRouter()
 
     useEffect(() => {
-        const userData = localStorage.getItem('user')
+        const userData = getCookie('user')
 
         if (!userData) {
             router.push('/login')
@@ -25,8 +26,8 @@ export default function AuthGuard({
         if (requiredRole) {
             const roleMapping = {
                 'kierownik': '0',
-                'kucharz': '1',
-                'kelner': '2'
+                'kelner': '1',
+                'kucharz': '2'
             }
 
             if (user.rola !== roleMapping[requiredRole]) {

@@ -1,168 +1,147 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/utils/supabase/client'
+import AuthGuard from '@/components/AuthGuard'
+import { getCookie } from '@/utils/cookies'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import React from 'react'
-import AuthGuard from '@/components/AuthGuard'
 
 export default function WaiterPage() {
     const supabase = createClient()
     const [tables, setTables] = useState<any[]>([])
-    const [orders, setOrders] = useState<any[]>([])
-    const [dishes, setDishes] = useState<any[]>([])
-    const [newOrder, setNewOrder] = useState({
-        tableId: '',
-        dishIds: [] as string[],
-        notes: ''
-    })
+    const [userName, setUserName] = useState<string>('')
+    const router = useRouter()
 
     useEffect(() => {
         fetchData()
+        getUserName()
     }, [])
 
     const fetchData = async () => {
-        const { data: tablesData } = await supabase.from('stolik').select('*')
-        const { data: ordersData } = await supabase.from('zamowienie').select('*')
-        const { data: dishesData } = await supabase.from('danie').select('*').eq('dostepnosc', true)
+        // Pobierz wszystkie stoliki
+        const { data: tablesData } = await supabase
+            .from('stolik')
+            .select('*')
+            .order('numer_stolika', { ascending: true })
+        if (!tablesData) return
 
-        if (tablesData) setTables(tablesData)
-        if (ordersData) setOrders(ordersData)
-        if (dishesData) setDishes(dishesData)
+        // Pobierz najnowsze zamówienie dla każdego stolika
+        const tablesWithStatus = await Promise.all(
+            tablesData.map(async (table: any) => {
+                const { data: order, error } = await supabase
+                    .from('zamowienie')
+                    .select('status_zamowienia')
+                    .eq('id_stolika', table.id_stolika)
+                    .order('id_zamowienia', { ascending: false })
+                    .limit(1)
+                    .single()
+
+                return {
+                    ...table,
+                    status_zamowienia: order?.status_zamowienia ?? null
+                }
+            })
+        )
+        setTables(tablesWithStatus)
     }
 
-    const handleCreateOrder = async () => {
-        const { data, error } = await supabase
-            .from('zamowienie')
-            .insert([{
-                typ_zamowienia: newOrder.tableId ? 'na miejscu' : 'na wynos',
-                id_stolika: newOrder.tableId || null,
-                uwagi: newOrder.notes,
-                status_zamowienia: 'nowe'
-            }])
-            .select()
-
-        if (data && data[0]) {
-            const orderId = data[0].id_zamowienia
-            const dishOrders = newOrder.dishIds.map(dishId => ({
-                id_zamowienia: orderId,
-                id_dania: dishId
-            }))
-
-            await supabase.from('danie_zamowienie').insert(dishOrders)
-            fetchData()
-            setNewOrder({ tableId: '', dishIds: [], notes: '' })
+    const getUserName = async () => {
+        try {
+            // Najpierw pobierz zalogowanego użytkownika
+            const userData = getCookie('user')
+            if (userData) {
+                const user = JSON.parse(userData)
+                if (user.nazwa_uzytkownika) {
+                    setUserName(user.nazwa_uzytkownika)
+                }
+            }
+        } catch (error) {
+            console.error('Wystąpił błąd:', error)
         }
     }
 
-    const handleServeOrder = async (orderId: string) => {
-        await supabase
-            .from('zamowienie')
-            .update({ status_zamowienia: 'wydane' })
-            .eq('id_zamowienia', orderId)
-        fetchData()
+    const getTableColor = (status: number | string | null | undefined) => {
+        if (
+            status === 0 ||
+            status === '0' ||
+            status === 'przyjęte'
+        ) return 'bg-green-200'
+        if (
+            status === 1 ||
+            status === '1' ||
+            status === 'w przygotowaniu' ||
+            status === 'w realizacji'
+        ) return 'bg-yellow-200'
+        // Zmienione: puste stoliki też na zielono
+        if (
+            status === 2 ||
+            status === '2' ||
+            status === 'zrealizowane' ||
+            status == null ||
+            status === undefined
+        ) return 'bg-green-200'
+        return 'bg-gray-200'
+    }
+
+    const getTableStatusText = (status: number | string | null | undefined) => {
+        if (status === 0 || status === '0') return 'Przyjęte'
+        if (status === 1 || status === '1') return 'W przygotowaniu'
+        if (status === 2 || status === '2') return 'Zrealizowane'
+        return 'Brak zamówienia'
     }
 
     return (
         <AuthGuard requiredRole="kelner">
-            <div className="p-4 bg-white">
-                <h1 className="text-2xl font-bold mb-6 text-black">Panel Kelnera</h1>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {/* Sekcja nowego zamówienia */}
-                    <div className="bg-white p-4 rounded-lg shadow">
-                        <h2 className="text-xl font-semibold mb-4 text-black">Nowe zamówienie</h2>
-
-                        <div className="mb-4">
-                            <label className="block mb-2 text-black">Stolik</label>
-                            <select
-                                className="w-full p-2 border rounded text-black bg-white"
-                                value={newOrder.tableId}
-                                onChange={(e) => setNewOrder({ ...newOrder, tableId: e.target.value })}
+            <div className="flex h-screen">
+                {/* Main content */}
+                <div className="flex-1 p-8 bg-gray-100">
+                    <h1 className="text-2xl font-bold mb-6 text-black">Stoliki</h1>
+                    <div className="grid grid-cols-3 gap-12 px-8">
+                        {tables.map((table) => (
+                            <Link
+                                href={`/waiter/table/${table.numer_stolika}`}
+                                key={table.id_stolika}
+                                className={`${getTableColor(table.status_zamowienia)} p-6 rounded-lg shadow-md cursor-pointer
+                                hover:shadow-lg transition-shadow duration-200`}
                             >
-                                <option value="" className="text-black">Na wynos</option>
-                                {tables.filter(t => t.status_stolika === 'wolny').map(table => (
-                                    <option key={table.id_stolika} value={table.id_stolika} className="text-black">
-                                        Stolik {table.numer_stolika}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
+                                <div className="flex items-center justify-center">
+                                    <span className="text-2xl font-bold text-black">Stolik {table.numer_stolika}</span>
+                                </div>
+                                <p className="text-center text-sm text-gray-600 mt-2">
+                                    {getTableStatusText(table.status_zamowienia)}
+                                </p>
+                            </Link>
+                        ))}
+                    </div>
+                </div>
 
-                        <div className="mb-4">
-                            <label className="block mb-2 text-black">Dania</label>
-                            <div className="grid grid-cols-2 gap-2">
-                                {dishes.map(dish => (
-                                    <div key={dish.id_dania} className="flex items-center">
-                                        <input
-                                            type="checkbox"
-                                            id={`dish-${dish.id_dania}`}
-                                            checked={newOrder.dishIds.includes(dish.id_dania)}
-                                            onChange={(e) => {
-                                                if (e.target.checked) {
-                                                    setNewOrder({ ...newOrder, dishIds: [...newOrder.dishIds, dish.id_dania] })
-                                                } else {
-                                                    setNewOrder({ ...newOrder, dishIds: newOrder.dishIds.filter(id => id !== dish.id_dania) })
-                                                }
-                                            }}
-                                        />
-                                        <label htmlFor={`dish-${dish.id_dania}`} className="ml-2 text-black">
-                                            {dish.nazwa} - {dish.cena} zł
-                                        </label>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-
-                        <div className="mb-4">
-                            <label className="block mb-2 text-black">Uwagi</label>
-                            <textarea
-                                className="w-full p-2 border rounded text-black bg-white"
-                                value={newOrder.notes}
-                                onChange={(e) => setNewOrder({ ...newOrder, notes: e.target.value })}
-                            />
-                        </div>
-
+                {/* Sidebar */}
+                <div className="w-32 bg-white shadow-lg flex flex-col">
+                    <div className="flex justify-center p-4">  {/* zmiana z justify-end na justify-center */}
                         <button
-                            onClick={handleCreateOrder}
-                            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+                            aria-label="Zamówienia w przygotowaniu"
+                            onClick={() => router.push('/waiter/orders')}
+                            className="focus:outline-none"
                         >
-                            Złóż zamówienie
+                            <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                                <rect y="4" width="24" height="4" rx="2" fill="black" />
+                                <rect y="10" width="24" height="4" rx="2" fill="black" />
+                                <rect y="16" width="24" height="4" rx="2" fill="black" />
+                            </svg>
                         </button>
                     </div>
-
-                    {/* Lista zamówień */}
-                    <div className="bg-white p-4 rounded-lg shadow">
-                        <h2 className="text-xl font-semibold mb-4 text-black">Aktualne zamówienia</h2>
-
-                        <div className="space-y-4">
-                            {orders.filter(o => o.status_zamowienia !== 'wydane').map(order => (
-                                <div key={order.id_zamowienia} className="border p-3 rounded">
-                                    <div className="flex justify-between">
-                                        <h3 className="font-medium text-black">
-                                            {order.id_stolika ? `Stolik ${tables.find(t => t.id_stolika === order.id_stolika)?.numer_stolika}` : 'Na wynos'}
-                                        </h3>
-                                        <span className={`px-2 py-1 text-xs rounded ${order.status_zamowienia === 'gotowe' ? 'bg-green-100 text-green-800' :
-                                            order.status_zamowienia === 'w przygotowaniu' ? 'bg-yellow-100 text-yellow-800' :
-                                                'bg-blue-100 text-blue-800'
-                                            }`}>
-                                            {order.status_zamowienia}
-                                        </span>
-                                    </div>
-
-                                    <div className="mt-2">
-                                        {order.uwagi && <p className="text-sm text-black">Uwagi: {order.uwagi}</p>}
-                                    </div>
-
-                                    {order.status_zamowienia === 'gotowe' && (
-                                        <button
-                                            onClick={() => handleServeOrder(order.id_zamowienia)}
-                                            className="mt-2 bg-green-600 text-white px-3 py-1 text-sm rounded hover:bg-green-700"
-                                        >
-                                            Wydaj zamówienie
-                                        </button>
-                                    )}
-                                </div>
-                            ))}
+                    <div className="flex-1 p-4">
+                    </div>
+                    <div className="p-4 border-t">
+                        <div className="flex flex-col items-center">
+                            <span className="text-sm text-gray-700 mb-2">{userName}</span>
+                            <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center">
+                                <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"
+                                        d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                </svg>
+                            </div>
                         </div>
                     </div>
                 </div>

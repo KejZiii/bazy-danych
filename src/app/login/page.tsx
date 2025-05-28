@@ -3,6 +3,7 @@ import { useState } from 'react'
 import React from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
+import { setCookie } from '@/utils/cookies'
 
 export default function LoginPage() {
     const supabase = createClient()
@@ -26,30 +27,28 @@ export default function LoginPage() {
                 .eq('status_konta', true)
                 .single();
 
-            console.log('Supabase response:', { data, supabaseError })
-
             if (supabaseError) {
                 throw new Error('Nieprawidłowa nazwa użytkownika lub PIN')
             }
 
             if (data) {
-                localStorage.setItem('user', JSON.stringify(data))
+                // Store user data in cookie instead of localStorage
+                setCookie('user', JSON.stringify(data))
 
                 switch (data.rola) {
-                    case '0':  // Changed from '0' to 'kierownik'
+                    case '0':
                         router.push('/manager')
                         break
                     case '1':
-                        router.push('/kitchen')
+                        router.push('/waiter')
                         break
                     case '2':
-                        router.push('/waiter')
+                        router.push('/kitchen')
                         break
                     default:
                         router.push('/dashboard')
                 }
-            }
-            else {
+            } else {
                 throw new Error('Nie znaleziono użytkownika')
             }
         } catch (err: any) {

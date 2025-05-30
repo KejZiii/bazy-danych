@@ -16,7 +16,7 @@ export default function WaiterPage() {
     useEffect(() => {
         fetchData()
         getUserName()
-    }, [])
+    })
 
     const fetchData = async () => {
         // Pobierz wszystkie stoliki
@@ -66,13 +66,13 @@ export default function WaiterPage() {
             status === 0 ||
             status === '0' ||
             status === 'przyjęte'
-        ) return 'bg-green-200'
+        ) return 'bg-yellow-200'; // Zmieniono na żółty dla statusu "przyjęte"
         if (
             status === 1 ||
             status === '1' ||
             status === 'w przygotowaniu' ||
             status === 'w realizacji'
-        ) return 'bg-yellow-200'
+        ) return 'bg-yellow-200'; // Pozostaje żółty dla statusu "w przygotowaniu"
         // Zmienione: puste stoliki też na zielono
         if (
             status === 2 ||
@@ -80,15 +80,20 @@ export default function WaiterPage() {
             status === 'zrealizowane' ||
             status == null ||
             status === undefined
-        ) return 'bg-green-200'
-        return 'bg-gray-200'
-    }
+        ) return 'bg-green-200'; // Pozostaje zielony dla wolnych/zrealizowanych
+        return 'bg-gray-200'; // Domyślny kolor
+    };
 
     const getTableStatusText = (status: number | string | null | undefined) => {
         if (status === 0 || status === '0') return 'Przyjęte'
         if (status === 1 || status === '1') return 'W przygotowaniu'
         if (status === 2 || status === '2') return 'Zrealizowane'
         return 'Brak zamówienia'
+    }
+
+    const handleLogout = () => {
+        document.cookie = "user=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+        router.push('/login');
     }
 
     return (
@@ -135,13 +140,19 @@ export default function WaiterPage() {
                     </div>
                     <div className="p-4 border-t">
                         <div className="flex flex-col items-center">
-                            <span className="text-sm text-gray-700 mb-2">{userName}</span>
-                            <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center">
+                            <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center mb-4">
                                 <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"
                                         d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                                 </svg>
                             </div>
+                            <span className="text-sm text-gray-700 text-center break-words w-full mb-4">{userName}</span>
+                            <button
+                                onClick={handleLogout}
+                                className="text-xs text-red-500 hover:text-red-700 underline focus:outline-none"
+                            >
+                                Wyloguj
+                            </button>
                         </div>
                     </div>
                 </div>

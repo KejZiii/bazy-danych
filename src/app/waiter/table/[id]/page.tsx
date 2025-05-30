@@ -8,7 +8,7 @@ import Link from 'next/link'
 interface Dish {
     id_dania: number
     nazwa: string
-    kategoria: string
+    kategoria: string // '0'-przystawka, '1'-danie glowne, '2'-deser, '3'-napoj
     cena: number
     opis: string
     dostepnosc: boolean
@@ -25,132 +25,162 @@ interface Zamowienie {
     id_zamowienia?: number
     id_stolika: number
     typ_zamowienia: boolean
-    data_zamowienia: string
-    status_zamowienia: string
+    data_zamowienia: string // Format HH:MM:SS
+    status_zamowienia: string // '0'-przyjete, '1'-w przygotowaniu, '2'-wydane
     numer_odbioru: number | null
     uwagi: string
+    suma_zamowienia?: number | null
+    danie_zamowienie?: DanieZamowienie[] // For data fetched from Supabase
 }
 
 interface DanieZamowienie {
-    id_danie_zamowienie: number
+    id_danie_zamowienie?: number // PK, auto-generated
     id_zamowienia: number
     id_dania: number
+    ilosc: number
+    status_dania_kucharza?: boolean | string // Added property, type depends on your DB (adjust if needed)
+    danie?: Dish // Nested data from Supabase
 }
 
 export default function TablePage() {
     const supabase = createClient()
     const params = useParams()
-    const tableId = params.id
+    const tableId = params.id as string // numer_stolika
     const [dishes, setDishes] = useState<Dish[]>([])
     const [selectedCategory, setSelectedCategory] = useState('Wszystkie')
-    const [orderItems, setOrderItems] = useState<OrderItem[]>([])
+    const [orderItems, setOrderItems] = useState<OrderItem[]>([]) // To jest stan UI dla tworzenia/edycji zamówienia
     const [totalAmount, setTotalAmount] = useState(0)
     const [showNotification, setShowNotification] = useState(false)
+    const [notificationMessage, setNotificationMessage] = useState('')
     const router = useRouter()
+    const [currentOrder, setCurrentOrder] = useState<Zamowienie | null>(null) // Przechowuje pełne dane załadowanego zamówienia, w tym statusy dań
+    const [isLoading, setIsLoading] = useState(true)
 
     useEffect(() => {
         fetchDishes()
-    }, [])
 
-    useEffect(() => {
-        const loadExistingOrder = async () => {
-            const { data: orderData } = await supabase
-                .from('zamowienie')
-                .select(`
-                *,
-                danie_zamowienie (
-                    id_dania,
-                    danie (*)
-                )
-            `)
-                .eq('id_stolika', tableId)
-                .in('status_zamowienia', [0, 1]) // pobierz zamówienie przyjęte lub w przygotowaniu
-                .order('id_zamowienia', { ascending: false })
-                .limit(1)
-                .single()
+        const loadOrderData = async () => {
+            if (!tableId) return
+            setIsLoading(true)
+            try {
+                const { data: stolikData, error: stolikError } = await supabase
+                    .from('stolik')
+                    .select('id_stolika')
+                    .eq('numer_stolika', Number(tableId))
+                    .single()
 
-            if (orderData) {
-                const items = orderData.danie_zamowienie.map((item: any) => ({
-                    id_dania: item.id_dania,
-                    nazwa: item.danie.nazwa,
-                    cena: item.danie.cena,
-                    ilosc: 1
-                }))
-                setOrderItems(items)
-                setTotalAmount(items.reduce((sum: number, item: OrderItem) => sum + item.cena, 0))
-            }
-            else {
-                setOrderItems([])      // <-- dodaj to!
+                if (stolikError || !stolikData) {
+                    console.error('Błąd pobierania stolika lub stolik nie istnieje:', stolikError)
+                    setCurrentOrder(null)
+                    setOrderItems([])
+                    setTotalAmount(0)
+                    setIsLoading(false)
+                    return
+                }
+                const actualStolikId = stolikData.id_stolika
+
+                const { data: existingOrderData, error: orderError } = await supabase
+                    .from('zamowienie')
+                    .select(`
+                        id_zamowienia,
+                        id_stolika,
+                        typ_zamowienia,
+                        data_zamowienia,
+                        status_zamowienia,
+                        numer_odbioru,
+                        uwagi,
+                        suma_zamowienia,
+                        danie_zamowienie (
+                            id_danie_zamowienie,
+                            id_dania,
+                            ilosc,
+                            status_dania_kucharza,
+                            danie (
+                                id_dania,
+                                nazwa,
+                                cena
+                            )
+                        )
+                    `)
+                    .eq('id_stolika', actualStolikId)
+                    .in('status_zamowienia', ['0', '1']) // Aktywne zamówienia
+                    .order('id_zamowienia', { ascending: false })
+                    .limit(1)
+                    .maybeSingle()
+
+                if (orderError) {
+                    console.error('Błąd pobierania istniejącego zamówienia:', orderError)
+                }
+
+                if (existingOrderData) {
+                    const fixedDanieZamowienie = (existingOrderData.danie_zamowienie || []).map((dz: any) => ({
+                        id_danie_zamowienie: dz.id_danie_zamowienie,
+                        id_zamowienia: existingOrderData.id_zamowienia, // Dodaj id_zamowienia do każdego dania
+                        id_dania: dz.id_dania,
+                        ilosc: dz.ilosc,
+                        status_dania_kucharza: dz.status_dania_kucharza, // Zachowaj status
+                        danie: Array.isArray(dz.danie) ? dz.danie[0] : dz.danie,
+                    }))
+                    setCurrentOrder({
+                        ...existingOrderData,
+                        danie_zamowienie: fixedDanieZamowienie,
+                    } as Zamowienie)
+
+                    // orderItems dla UI są budowane na podstawie załadowanego zamówienia
+                    const items: OrderItem[] = fixedDanieZamowienie.map((dz: any) => ({
+                        id_dania: dz.danie.id_dania,
+                        nazwa: dz.danie.nazwa,
+                        cena: dz.danie.cena,
+                        ilosc: dz.ilosc,
+                        // Możesz dodać status_dania_kucharza do OrderItem, jeśli chcesz go wyświetlać w UI zamówienia
+                    }))
+                    setOrderItems(items)
+                    setTotalAmount(items.reduce((sum, item) => sum + item.cena * item.ilosc, 0))
+                } else {
+                    setCurrentOrder(null)
+                    setOrderItems([])
+                    setTotalAmount(0)
+                }
+            } catch (error) {
+                console.error('Błąd ładowania danych zamówienia:', error)
+                setCurrentOrder(null)
+                setOrderItems([])
                 setTotalAmount(0)
+            } finally {
+                setIsLoading(false)
             }
         }
 
-        loadExistingOrder()
-    }, [tableId, supabase])
+        loadOrderData()
 
-    // useEffect(() => {
-    //     const loadExistingOrder = async () => {
-    //         try {
-    //             // Pobierz id_stolika na podstawie numeru stolika
-    //             const { data: stolikData, error: stolikError } = await supabase
-    //                 .from('stolik')
-    //                 .select('id_stolika, status_stolika')
-    //                 .eq('numer_stolika', Number(tableId))
-    //                 .single()
+        // Subskrypcja Realtime do odświeżania danych zamówienia, jeśli kucharz zmieni status
+        const channel = supabase
+            .channel(`table-${tableId}-order-updates`)
+            .on(
+                'postgres_changes',
+                {
+                    event: 'UPDATE',
+                    schema: 'public',
+                    table: 'danie_zamowienie',
+                    // Możesz dodać filtr, jeśli chcesz nasłuchiwać tylko na zmiany dla konkretnego zamówienia
+                    // filter: `id_zamowienia=eq.${currentOrder?.id_zamowienia}` (ale currentOrder może być null na początku)
+                },
+                (payload) => {
+                    console.log('Zmiana w danie_zamowienie (status od kucharza):', payload);
+                    // Jeśli zmiana dotyczy aktualnie otwartego zamówienia, załaduj dane ponownie
+                    // Sprawdź, czy payload.new.id_zamowienia pasuje do currentOrder.id_zamowienia
+                    if (currentOrder && payload.new && (payload.new as any).id_zamowienia === currentOrder.id_zamowienia) {
+                        loadOrderData(); // Odśwież dane, aby pobrać nowy status dań
+                    }
+                }
+            )
+            .subscribe();
 
-    //             if (stolikError || !stolikData) {
-    //                 console.error('Błąd pobierania stolika:', stolikError)
-    //                 setOrderItems([])
-    //                 setTotalAmount(0)
-    //                 return
-    //             }
+        return () => {
+            supabase.removeChannel(channel);
+        };
 
-    //             // Pobierz najnowsze niezakończone zamówienie dla stolika
-    //             const { data: orderData, error: orderError } = await supabase
-    //                 .from('zamowienie')
-    //                 .select(`
-    //                 *,
-    //                 danie_zamowienie (
-    //                     id_dania,
-    //                     danie (
-    //                         id_dania,
-    //                         nazwa,
-    //                         cena
-    //                     )
-    //                 )
-    //             `)
-    //                 .eq('id_stolika', stolikData.id_stolika)
-    //                 .in('status_zamowienia', ['0', '1']) // statusy: przyjęte lub w przygotowaniu
-    //                 .order('id_zamowienia', { ascending: false })
-    //                 .limit(1)
-    //                 .single()
-
-    //             if (orderError && orderError.code !== 'PGRST116') { // Ignoruj błąd "No rows found"
-    //                 console.error('Błąd pobierania zamówienia:', orderError)
-    //             }
-
-    //             if (orderData) {
-    //                 const items = orderData.danie_zamowienie.map((item: any) => ({
-    //                     id_dania: item.danie.id_dania,
-    //                     nazwa: item.danie.nazwa,
-    //                     cena: item.danie.cena,
-    //                     ilosc: 1
-    //                 }))
-    //                 setOrderItems(items)
-    //                 setTotalAmount(items.reduce((sum: number, item: OrderItem) => sum + item.cena, 0))
-    //             } else {
-    //                 setOrderItems([])
-    //                 setTotalAmount(0)
-    //             }
-    //         } catch (error) {
-    //             console.error('Błąd ładowania zamówienia:', error)
-    //             setOrderItems([])
-    //             setTotalAmount(0)
-    //         }
-    //     }
-
-    //     loadExistingOrder()
-    // }, [tableId, supabase])
+    }, [tableId, supabase, currentOrder?.id_zamowienia]); // Dodaj currentOrder.id_zamowienia do zależności, aby kanał mógł się zaktualizować
 
     const fetchDishes = async () => {
         const { data } = await supabase
@@ -171,7 +201,7 @@ export default function TablePage() {
     }
 
     const categories = ['Wszystkie', 'Przystawki', 'Dania Główne', 'Desery', 'Napoje']
-    const categoryMapping = {
+    const categoryMapping: { [key: string]: string } = {
         'Przystawki': '0',
         'Dania Główne': '1',
         'Desery': '2',
@@ -181,7 +211,7 @@ export default function TablePage() {
     const filteredDishes = selectedCategory === 'Wszystkie'
         ? [...dishes].sort((a, b) => a.nazwa.localeCompare(b.nazwa))
         : [...dishes]
-            .filter(dish => dish.kategoria === categoryMapping[selectedCategory as keyof typeof categoryMapping])
+            .filter(dish => dish.kategoria === categoryMapping[selectedCategory])
             .sort((a, b) => a.nazwa.localeCompare(b.nazwa))
 
     const addToOrder = (dish: Dish) => {
@@ -200,29 +230,40 @@ export default function TablePage() {
     }
 
     const removeFromOrder = (dishId: number, price: number) => {
+        let itemRemovedOrDecremented = false;
         setOrderItems(prevItems => {
-            const existingItem = prevItems.find(item => item.id_dania === dishId)
-            if (existingItem && existingItem.ilosc > 1) {
-                return prevItems.map(item =>
-                    item.id_dania === dishId
-                        ? { ...item, ilosc: item.ilosc - 1 }
-                        : item
-                )
+            const existingItem = prevItems.find(item => item.id_dania === dishId);
+            if (existingItem) {
+                itemRemovedOrDecremented = true;
+                if (existingItem.ilosc > 1) {
+                    return prevItems.map(item =>
+                        item.id_dania === dishId
+                            ? { ...item, ilosc: item.ilosc - 1 }
+                            : item
+                    );
+                }
+                return prevItems.filter(item => item.id_dania !== dishId);
             }
-            return prevItems.filter(item => item.id_dania !== dishId)
-        })
-        setTotalAmount(prev => prev - price)
+            return prevItems; // Should not happen if button is only on existing items
+        });
+
+        if (itemRemovedOrDecremented) {
+            setTotalAmount(prev => Math.max(0, prev - price));
+        }
     }
 
     const handleSaveOrder = async () => {
-        try {
-            // Zapisz zamówienie
-            if (!tableId) {
-                throw new Error('Brak numeru stolika w adresie!')
-            }
-            const now = new Date()
-            const timeString = now.toTimeString().split(' ')[0]
+        if (!tableId) {
+            alert('Brak numeru stolika.')
+            return
+        }
+        if (orderItems.length === 0 && !currentOrder) {
+            alert("Nie można zapisać pustego nowego zamówienia.")
+            return
+        }
 
+        setIsLoading(true)
+        try {
             const { data: stolikData, error: stolikError } = await supabase
                 .from('stolik')
                 .select('id_stolika')
@@ -230,141 +271,159 @@ export default function TablePage() {
                 .single()
 
             if (stolikError || !stolikData) {
-                throw new Error('Nie znaleziono stolika')
+                throw new Error('Nie znaleziono stolika o podanym numerze.')
+            }
+            const actualStolikId = stolikData.id_stolika
+            const now = new Date()
+            const timeString = now.toTimeString().split(' ')[0] // HH:MM:SS
+
+            const calculatedTotalAmount = orderItems.reduce((sum, item) => sum + item.cena * item.ilosc, 0)
+
+            let orderIdToUse: number
+
+            if (currentOrder && currentOrder.id_zamowienia) {
+                orderIdToUse = currentOrder.id_zamowienia
+                const { error: updateOrderError } = await supabase
+                    .from('zamowienie')
+                    .update({
+                        suma_zamowienia: calculatedTotalAmount,
+                        // data_zamowienia: timeString, // Opcjonalnie: aktualizuj czas modyfikacji
+                        // uwagi: currentOrder.uwagi // Jeśli masz pole na uwagi w UI
+                    })
+                    .eq('id_zamowienia', orderIdToUse)
+
+                if (updateOrderError) throw updateOrderError
+
+                const { error: deleteItemsError } = await supabase
+                    .from('danie_zamowienie')
+                    .delete()
+                    .eq('id_zamowienia', orderIdToUse)
+                if (deleteItemsError) throw deleteItemsError
+            } else {
+                const newOrderPayload = {
+                    id_stolika: actualStolikId,
+                    typ_zamowienia: false,
+                    data_zamowienia: timeString,
+                    status_zamowienia: '0', // Przyjęte
+                    numer_odbioru: null,
+                    uwagi: '', // Można dodać pole w UI
+                    suma_zamowienia: calculatedTotalAmount,
+                }
+                const { data: newOrderData, error: newOrderError } = await supabase
+                    .from('zamowienie')
+                    .insert([newOrderPayload])
+                    .select('id_zamowienia')
+                    .single()
+
+                if (newOrderError || !newOrderData) throw newOrderError || new Error("Nie udało się utworzyć zamówienia")
+                orderIdToUse = newOrderData.id_zamowienia
+                setCurrentOrder({ ...newOrderPayload, id_zamowienia: orderIdToUse })
             }
 
-
-            const orderPayload: Omit<Zamowienie, 'id_zamowienia'> = {
-                id_stolika: stolikData.id_stolika,
-                typ_zamowienia: false,
-                data_zamowienia: timeString,
-                status_zamowienia: '1',
-                numer_odbioru: null,
-                uwagi: ''
+            if (orderItems.length > 0) {
+                const orderPositionsToInsert = orderItems.map(item => ({
+                    id_zamowienia: orderIdToUse,
+                    id_dania: item.id_dania,
+                    ilosc: item.ilosc,
+                    status_dania_kucharza: '0',
+                }))
+                const { error: insertItemsError } = await supabase
+                    .from('danie_zamowienie')
+                    .insert(orderPositionsToInsert)
+                if (insertItemsError) throw insertItemsError
             }
 
-            const { data: orderData, error: orderError } = await supabase
-                .from('zamowienie')
-                .insert([orderPayload])
-                .select()
-                .single()
-
-            if (orderError) {
-                console.error('Order creation error:', orderError)
-                throw orderError
-            }
-
-            if (!orderData) {
-                throw new Error('No order data returned')
-            }
-
-            const { data: maxIdData, error: maxIdError } = await supabase
-                .from('danie_zamowienie')
-                .select('id_danie_zamowienie')
-                .order('id_danie_zamowienie', { ascending: false })
-                .limit(1)
-                .single()
-
-            const startId = (maxIdData?.id_danie_zamowienie || 0) + 1
-            if (maxIdError && maxIdError.code !== 'PGRST116') {
-                console.error('Error fetching max ID:', maxIdError)
-                throw maxIdError
-            }
-            // Zapisz pozycje zamówienia
-            const orderPositions = orderItems.map((item) => ({
-                id_zamowienia: orderData.id_zamowienia,
-                id_dania: item.id_dania,
-            }))
-
-            const { error: itemsError } = await supabase
-                .from('danie_zamowienie')
-                .insert(orderPositions)
-
-            const { error: tableError } = await supabase
+            const newTableStatus = orderItems.length > 0
+            await supabase
                 .from('stolik')
-                .update({ status_stolika: '1' })
-                .eq('numer_stolika', tableId)
+                .update({ status_stolika: newTableStatus }) // true = zajęty, false = wolny
+                .eq('id_stolika', actualStolikId)
 
-            if (itemsError) throw itemsError
-
-            router.push('/waiter')
-        } catch (error) {
-            console.error('Error saving order:', error)
-        }
-    }
-
-    const handlePayment = async () => {
-        try {
-            // Pobierz id_stolika na podstawie numeru stolika
-            const { data: stolikData, error: stolikError } = await supabase
-                .from('stolik')
-                .select('id_stolika')
-                .eq('numer_stolika', Number(tableId))
-                .single()
-
-            if (stolikError || !stolikData) throw new Error('Nie znaleziono stolika')
-
-            if (stolikError) {
-                console.error('Błąd pobierania stolika:', stolikError)
-                throw new Error('Nie znaleziono stolika')
-            }
-            if (!stolikData) {
-                console.error('Brak danych stolika dla numeru:', tableId)
-                throw new Error('Nie znaleziono stolika')
-            }
-            // Pobierz najnowsze otwarte zamówienie dla stolika
-            const { data: orderData, error: orderFetchError } = await supabase
-                .from('zamowienie')
-                .select('id_zamowienia')
-                .eq('id_stolika', stolikData.id_stolika)
-                .in('status_zamowienia', [1, '1'])
-                .order('id_zamowienia', { ascending: false })
-                .limit(1)
-                .single()
-
-            if (orderFetchError || !orderData) throw new Error('Nie znaleziono otwartego zamówienia')
-            if (orderFetchError) {
-                console.error('Błąd pobierania zamówienia:', orderFetchError)
-            }
-            if (!orderData) {
-                console.error('Brak otwartego zamówienia dla id_stolika:', stolikData.id_stolika)
-                throw new Error('Nie znaleziono otwartego zamówienia')
-            }
-            console.log('Znalezione zamówienie:', orderData)
-            // Zaktualizuj status zamówienia na zrealizowane
-            const { error: updateError } = await supabase
-                .from('zamowienie')
-                .update({ status_zamowienia: 2 })
-                .eq('id_zamowienia', orderData.id_zamowienia)
-
-            if (updateError) {
-                console.error('Błąd aktualizacji zamówienia:', updateError)
-                throw updateError
-            }
-
-            // Zaktualizuj status stolika
-            const { error: tableError } = await supabase
-                .from('stolik')
-                .update({ status_stolika: false })
-                .eq('numer_stolika', Number(tableId))
-
-            if (tableError) {
-                console.error('Błąd aktualizacji stolika:', tableError)
-                throw tableError
-            }
-
-            setOrderItems([])
-            setTotalAmount(0)
-
+            setNotificationMessage(currentOrder && currentOrder.id_zamowienia ? 'Zamówienie zaktualizowane!' : 'Zamówienie zapisane!')
             setShowNotification(true)
             setTimeout(() => {
                 setShowNotification(false)
                 router.push('/waiter')
-            }, 2000)
+            }, 1500)
 
         } catch (error) {
-            console.error('Error processing payment:', error)
+            console.error('Error saving order:', error)
+            alert(`Wystąpił błąd podczas zapisywania zamówienia: ${(error as Error).message}`)
+        } finally {
+            setIsLoading(false)
         }
+    }
+
+    const handlePayment = async () => {
+        if (!currentOrder || !currentOrder.id_zamowienia) {
+            alert("Brak aktywnego zamówienia do opłacenia.");
+            return;
+        }
+
+        // Sprawdź, czy wszystkie dania w zamówieniu są gotowe
+        if (currentOrder.danie_zamowienie && currentOrder.danie_zamowienie.length > 0) {
+            const allDishesReady = currentOrder.danie_zamowienie.every(
+                (dish) => dish.status_dania_kucharza === true
+            );
+
+            if (!allDishesReady) {
+                alert("Nie wszystkie dania zostały oznaczone jako gotowe przez kucharza. Nie można zamknąć rachunku.");
+                return;
+            }
+        } else if (orderItems.length > 0 && (!currentOrder.danie_zamowienie || currentOrder.danie_zamowienie.length === 0)) {
+            // Ten przypadek może wystąpić, jeśli zamówienie jest tworzone i od razu opłacane,
+            // a dania nie zostały jeszcze zapisane w bazie z ich statusami.
+            // W typowym przepływie, najpierw zapisujesz zamówienie (handleSaveOrder),
+            // a potem dopiero je opłacasz. Jeśli chcesz pozwolić na opłacenie nowo tworzonego zamówienia
+            // bez jawnego zapisu, musisz zdecydować, jak traktować statusy dań.
+            // Dla bezpieczeństwa, można założyć, że nowo dodane dania nie są jeszcze gotowe.
+            // LUB, jeśli przepływ zawsze wymaga zapisu przed płatnością, ten warunek może nie być potrzebny.
+            alert("Zamówienie nie zostało jeszcze przetworzone przez kuchnię. Zapisz zamówienie, aby kuchnia mogła przygotować dania.");
+            return;
+        }
+
+
+        setIsLoading(true);
+        try {
+            const finalTotalAmount = orderItems.reduce((sum, item) => sum + item.cena * item.ilosc, 0);
+
+            const { error: updateOrderError } = await supabase
+                .from('zamowienie')
+                .update({ status_zamowienia: '2', suma_zamowienia: finalTotalAmount }) // '2' - wydane/zrealizowane
+                .eq('id_zamowienia', currentOrder.id_zamowienia);
+            if (updateOrderError) throw updateOrderError;
+
+            await supabase
+                .from('stolik')
+                .update({ status_stolika: false }) // false = wolny
+                .eq('id_stolika', currentOrder.id_stolika);
+
+
+            setOrderItems([]);
+            setTotalAmount(0);
+            setCurrentOrder(null);
+
+            setNotificationMessage('Paragon został wygenerowany pomyślnie!');
+            setShowNotification(true);
+            setTimeout(() => {
+                setShowNotification(false);
+                router.push('/waiter');
+            }, 2000);
+
+        } catch (error) {
+            console.error('Error processing payment:', error);
+            alert(`Wystąpił błąd podczas przetwarzania płatności: ${(error as Error).message}`);
+        } finally {
+            setIsLoading(false);
+        }
+    }
+
+    if (isLoading && !dishes.length) { // Pokaż ładowanie tylko przy pierwszym ładowaniu danych
+        return (
+            <div className="flex justify-center items-center h-screen bg-gray-100">
+                <p className="text-xl text-black">Ładowanie danych stolika...</p>
+            </div>
+        );
     }
 
     return (
@@ -374,18 +433,20 @@ export default function TablePage() {
                 <div className="w-1/5 bg-white shadow-lg flex flex-col">
                     <div className="p-4 flex-1 overflow-y-auto">
                         <h2 className="text-xl font-bold mb-4 text-black">Zamówienie</h2>
-                        <div className="space-y-4">
+                        <div className="space-y-2">
+                            {orderItems.length === 0 && <p className="text-gray-500">Brak pozycji w zamówieniu.</p>}
                             {orderItems.map((item) => (
                                 <div key={item.id_dania} className="flex justify-between items-center p-2 bg-gray-50 rounded">
                                     <div>
-                                        <p className="font-medium text-black">{item.nazwa}</p>
-                                        <p className="text-sm text-black">{item.ilosc} x {item.cena} zł</p>
+                                        <p className="font-medium text-black text-sm">{item.nazwa}</p>
+                                        <p className="text-xs text-black">{item.ilosc} x {item.cena.toFixed(2)} zł</p>
                                     </div>
                                     <button
                                         onClick={() => removeFromOrder(item.id_dania, item.cena)}
-                                        className="text-red-500 hover:text-red-700 px-3 py-1"
+                                        className="text-red-500 hover:text-red-700 px-2 py-1 text-lg"
+                                        aria-label={`Usuń ${item.nazwa}`}
                                     >
-                                        -
+                                        &ndash;
                                     </button>
                                 </div>
                             ))}
@@ -397,15 +458,15 @@ export default function TablePage() {
                         </div>
                         <button
                             onClick={handleSaveOrder}
-                            className="w-full bg-green-600 text-white py-2 rounded mb-2 hover:bg-green-700"
-                            disabled={orderItems.length === 0}
+                            className="w-full bg-green-600 text-white py-2 rounded mb-2 hover:bg-green-700 disabled:opacity-50"
+                            disabled={isLoading || (orderItems.length === 0 && !currentOrder)}
                         >
-                            Zapisz zamówienie
+                            {currentOrder ? 'Zaktualizuj ' : 'Zapisz '}
                         </button>
                         <button
                             onClick={handlePayment}
-                            className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700"
-                            disabled={orderItems.length === 0}
+                            className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:opacity-50"
+                            disabled={isLoading || !currentOrder || orderItems.length === 0} // Podstawowe warunki pozostają
                         >
                             Zapłać
                         </button>
@@ -424,14 +485,14 @@ export default function TablePage() {
                         <h1 className="text-2xl font-bold text-black">Stolik {tableId}</h1>
                     </div>
 
-                    <div className="flex space-x-4 mb-6">
+                    <div className="flex space-x-2 mb-6 overflow-x-auto pb-2">
                         {categories.map((category) => (
                             <button
                                 key={category}
                                 onClick={() => setSelectedCategory(category)}
-                                className={`px-4 py-2 rounded-lg ${selectedCategory === category
+                                className={`px-3 py-2 rounded-lg text-sm whitespace-nowrap ${selectedCategory === category
                                     ? 'bg-purple-600 text-white'
-                                    : 'bg-white text-black'
+                                    : 'bg-white text-black hover:bg-gray-200'
                                     }`}
                             >
                                 {category}
@@ -439,31 +500,33 @@ export default function TablePage() {
                         ))}
                     </div>
 
-                    <div className="grid grid-cols-3 gap-6">
+                    {isLoading && dishes.length > 0 && <p className="text-center text-gray-600">Aktualizowanie...</p>}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                         {filteredDishes.map((dish) => (
                             <div
                                 key={dish.id_dania}
-                                className="bg-white p-4 rounded-lg shadow"
+                                className="bg-white p-3 rounded-lg shadow hover:shadow-md transition-shadow cursor-pointer"
+                                onClick={() => addToOrder(dish)}
+                                role="button"
+                                tabIndex={0}
+                                aria-label={`Dodaj ${dish.nazwa} do zamówienia`}
                             >
-                                <h3 className="font-semibold text-lg mb-2 text-black">{dish.nazwa}</h3>
-                                <div className="flex justify-between items-center">
-                                    <span className="font-bold text-lg text-black">{dish.cena} zł</span>
-                                    <button
-                                        onClick={() => addToOrder(dish)}
-                                        className="bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700"
-                                    >
-                                        Dodaj
-                                    </button>
+                                <h3 className="font-semibold text-md mb-1 text-black">{dish.nazwa}</h3>
+                                {selectedCategory === 'Wszystkie' && (
+                                    <p className="text-xs text-gray-600 mb-2">{getCategoryName(dish.kategoria)}</p>
+                                )}
+                                <div className="flex justify-between items-center mt-2"> {/* Dodano mt-2 dla lepszego odstępu, jeśli kategoria jest ukryta */}
+                                    <span className="font-bold text-md text-black">{dish.cena.toFixed(2)} zł</span>
                                 </div>
                             </div>
                         ))}
                     </div>
                 </div>
                 {showNotification && (
-                    <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50">
+                    <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">
                         <div className="bg-white p-6 rounded-lg shadow-xl">
                             <p className="text-xl text-black font-semibold">
-                                Paragon został wygenerowany pomyślnie!
+                                {notificationMessage}
                             </p>
                         </div>
                     </div>

@@ -1,4 +1,5 @@
 'use client'
+import { Suspense } from 'react'
 import React, { useState, useEffect, FormEvent, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
@@ -22,7 +23,7 @@ const categoryOptionsArray = [
     { value: '3', label: 'Napoje' },
 ];
 
-export default function DishFormPage() {
+function DishFormPageContent() {
     const supabase = createClient();
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -173,4 +174,12 @@ export default function DishFormPage() {
             </div>
         </AuthGuard>
     );
+}
+
+export default function DishFormPage() {
+    return (
+        <Suspense fallback={<div>Ładowanie...</div>}>
+            <DishFormPageContent />
+        </Suspense>
+    )
 }

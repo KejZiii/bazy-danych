@@ -5,6 +5,8 @@ import AuthGuard from '@/components/AuthGuard'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 
+
+
 interface Dish {
     id_dania: number
     nazwa: string
@@ -42,10 +44,17 @@ interface DanieZamowienie {
     danie?: Dish // Nested data from Supabase
 }
 
+interface OrderListItem {
+    id_zamowienia: number
+    data_zamowienia: string
+    status_zamowienia: string
+    suma_zamowienia: number | null
+}
+
 export default function TablePage() {
     const supabase = createClient()
     const params = useParams()
-    const tableId = params.id as string // numer_stolika
+    const tableId = params.id as string
     const [dishes, setDishes] = useState<Dish[]>([])
     const [selectedCategory, setSelectedCategory] = useState('Wszystkie')
     const [orderItems, setOrderItems] = useState<OrderItem[]>([]) // To jest stan UI dla tworzenia/edycji zamówienia
@@ -55,11 +64,11 @@ export default function TablePage() {
     const router = useRouter()
     const [currentOrder, setCurrentOrder] = useState<Zamowienie | null>(null) // Przechowuje pełne dane załadowanego zamówienia, w tym statusy dań
     const [isLoading, setIsLoading] = useState(true)
+    const [ordersList, setOrdersList] = useState<OrderListItem[]>([])
+    const [showOrdersModal, setShowOrdersModal] = useState(true) // Pokazuj modal na start
 
-    useEffect(() => {
-        fetchDishes()
 
-        const loadOrderData = async () => {
+const loadOrderData = async (orderId: number) => {
             if (!tableId) return
             setIsLoading(true)
             try {
@@ -80,33 +89,30 @@ export default function TablePage() {
                 const actualStolikId = stolikData.id_stolika
 
                 const { data: existingOrderData, error: orderError } = await supabase
-                    .from('zamowienie')
-                    .select(`
-                        id_zamowienia,
-                        id_stolika,
-                        typ_zamowienia,
-                        data_zamowienia,
-                        status_zamowienia,
-                        numer_odbioru,
-                        uwagi,
-                        suma_zamowienia,
-                        danie_zamowienie (
-                            id_danie_zamowienie,
+                .from('zamowienie')
+                .select(`
+                    id_zamowienia,
+                    id_stolika,
+                    typ_zamowienia,
+                    data_zamowienia,
+                    status_zamowienia,
+                    numer_odbioru,
+                    uwagi,
+                    suma_zamowienia,
+                    danie_zamowienie (
+                        id_danie_zamowienie,
+                        id_dania,
+                        ilosc,
+                        status_dania_kucharza,
+                        danie (
                             id_dania,
-                            ilosc,
-                            status_dania_kucharza,
-                            danie (
-                                id_dania,
-                                nazwa,
-                                cena
-                            )
+                            nazwa,
+                            cena
                         )
-                    `)
-                    .eq('id_stolika', actualStolikId)
-                    .in('status_zamowienia', ['0', '1']) // Aktywne zamówienia
-                    .order('id_zamowienia', { ascending: false })
-                    .limit(1)
-                    .maybeSingle()
+                    )
+                `)
+                .eq('id_zamowienia', orderId) // <-- pobieraj po id_zamowienia!
+                .maybeSingle()
 
                 if (orderError) {
                     console.error('Błąd pobierania istniejącego zamówienia:', orderError)
@@ -151,36 +157,35 @@ export default function TablePage() {
             }
         }
 
-        loadOrderData()
+        
 
-        // Subskrypcja Realtime do odświeżania danych zamówienia, jeśli kucharz zmieni status
-        const channel = supabase
-            .channel(`table-${tableId}-order-updates`)
-            .on(
-                'postgres_changes',
-                {
-                    event: 'UPDATE',
-                    schema: 'public',
-                    table: 'danie_zamowienie',
-                    // Możesz dodać filtr, jeśli chcesz nasłuchiwać tylko na zmiany dla konkretnego zamówienia
-                    // filter: `id_zamowienia=eq.${currentOrder?.id_zamowienia}` (ale currentOrder może być null na początku)
-                },
-                (payload) => {
-                    console.log('Zmiana w danie_zamowienie (status od kucharza):', payload);
-                    // Jeśli zmiana dotyczy aktualnie otwartego zamówienia, załaduj dane ponownie
-                    // Sprawdź, czy payload.new.id_zamowienia pasuje do currentOrder.id_zamowienia
-                    if (currentOrder && payload.new && (payload.new as any).id_zamowienia === currentOrder.id_zamowienia) {
-                        loadOrderData(); // Odśwież dane, aby pobrać nowy status dań
-                    }
+    useEffect(() => {
+    fetchDishes();
+    fetchOrdersList();
+
+    // Subskrypcja realtime do odświeżania zamówienia
+    const channel = supabase
+        .channel(`table-${tableId}-order-updates`)
+        .on(
+            'postgres_changes',
+            {
+                event: 'UPDATE',
+                schema: 'public',
+                table: 'danie_zamowienie',
+            },
+            (payload) => {
+                if (currentOrder && payload.new && (payload.new as any).id_zamowienia === currentOrder.id_zamowienia) {
+                    handleSelectOrder(currentOrder.id_zamowienia!);
                 }
-            )
-            .subscribe();
+            }
+        )
+        .subscribe();
 
-        return () => {
-            supabase.removeChannel(channel);
-        };
-
-    }, [tableId, supabase, currentOrder?.id_zamowienia]); // Dodaj currentOrder.id_zamowienia do zależności, aby kanał mógł się zaktualizować
+    return () => {
+        supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line
+}, [tableId, supabase])
 
     const fetchDishes = async () => {
         const { data } = await supabase
@@ -188,6 +193,23 @@ export default function TablePage() {
             .select('*')
             .eq('dostepnosc', true)
         if (data) setDishes(data)
+    }
+
+    const fetchOrdersList = async () => {
+        if (!tableId) return
+        const { data, error } = await supabase
+            .from('zamowienie')
+            .select(`
+                id_zamowienia,
+                data_zamowienia,
+                status_zamowienia,
+                suma_zamowienia
+            `)
+            .eq('id_stolika', Number(tableId))
+            .in('status_zamowienia', ['0', '1'])
+            .order('id_zamowienia', { ascending: true })
+
+        if (!error && data) setOrdersList(data as OrderListItem[])
     }
 
     const getCategoryName = (kategoria: string) => {
@@ -418,6 +440,26 @@ const timestampString = now.toISOString() // <-- pełny timestamp
         }
     }
 
+    const handleSelectOrder = async (orderId: number) => {
+    setShowOrdersModal(false)
+    setIsLoading(true)
+    try {
+        await loadOrderData(orderId)
+    } catch (error) {
+        alert('Błąd ładowania zamówienia')
+    } finally {
+        setIsLoading(false)
+    }
+}
+
+    const handleAddNewOrder = () => {
+    setShowOrdersModal(false)
+    setCurrentOrder(null)
+    setOrderItems([])
+    setTotalAmount(0)
+    setIsLoading(false) // <-- dodaj to!
+}
+
     if (isLoading && !dishes.length) { // Pokaż ładowanie tylko przy pierwszym ładowaniu danych
         return (
             <div className="flex justify-center items-center h-screen bg-gray-100">
@@ -426,8 +468,37 @@ const timestampString = now.toISOString() // <-- pełny timestamp
         );
     }
 
+    // Dodaj modal na początek rendera
     return (
         <AuthGuard requiredRole="kelner">
+            {showOrdersModal && (
+                <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">
+                    <div className="bg-white p-8 rounded-lg shadow-xl min-w-[320px]">
+                        <h2 className="text-xl font-bold mb-4 text-black">Wybierz zamówienie dla stolika {tableId}</h2>
+                        {ordersList.length === 0 ? (
+                            <div className="mb-4 text-gray-600">Brak aktywnych zamówień.</div>
+                        ) : (
+                            <div className="flex flex-wrap gap-2 mb-4">
+                                {ordersList.map((order) => (
+                                    <button
+                                        key={order.id_zamowienia}
+                                        className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+                                        onClick={() => typeof order.id_zamowienia === 'number' && handleSelectOrder(order.id_zamowienia)}
+                                    >
+                                        Zamówienie #{order.id_zamowienia}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                        <button
+                            className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 w-full"
+                            onClick={handleAddNewOrder}
+                        >
+                            Dodaj nowe zamówienie
+                        </button>
+                    </div>
+                </div>
+            )}
             <div className="flex h-screen">
                 {/* Order sidebar */}
                 <div className="w-1/5 bg-white shadow-lg flex flex-col">

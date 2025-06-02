@@ -292,7 +292,14 @@ return (
                 <div className="mb-4 pb-2 border-b border-gray-200">
                     <h2 className="text-xl font-semibold text-purple-700">
                         {order.stolik && (
-                            <span className="text-xl text-gray-600">Stolik: {order.stolik.numer_stolika}</span>
+                            <span className="text-xl text-gray-600">
+                                Stolik: {order.stolik.numer_stolika}, Zamówienie #{order.id_zamowienia}
+                            </span>
+                        )}
+                        {!order.stolik && (
+                            <span className="text-xl text-gray-600">
+                                Zamówienie #{order.id_zamowienia}
+                            </span>
                         )}
                     </h2>
                     <p className="text-base text-gray-500">

@@ -44,7 +44,7 @@ const ReportGenerationSection: React.FC<ReportGenerationSectionProps> = ({
                     <div>
                         <label htmlFor="reportStartDate" className="block text-sm font-medium text-gray-700 mb-1">Data początkowa</label>
                         <input
-                            type="date"
+                            type="datetime-local"
                             id="reportStartDate"
                             value={reportStartDate}
                             onChange={(e) => setReportStartDate(e.target.value)}
@@ -54,7 +54,7 @@ const ReportGenerationSection: React.FC<ReportGenerationSectionProps> = ({
                     <div>
                         <label htmlFor="reportEndDate" className="block text-sm font-medium text-gray-700 mb-1">Data końcowa</label>
                         <input
-                            type="date"
+                            type="datetime-local"
                             id="reportEndDate"
                             value={reportEndDate}
                             onChange={(e) => setReportEndDate(e.target.value)}
@@ -63,7 +63,6 @@ const ReportGenerationSection: React.FC<ReportGenerationSectionProps> = ({
                     </div>
                 </div>
                 <p className="text-xs text-gray-500 mt-2">
-                    Uwaga: Aktualnie generowanie raportów popularności dań i przychodów nie filtruje po dacie. Ta funkcjonalność zostanie dodana w przyszłości.
                     Wybrane daty są zapisywane w tabeli `Raport` dla celów ewidencyjnych.
                 </p>
             </div>

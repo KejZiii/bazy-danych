@@ -33,24 +33,86 @@ export default function KitchenPage() {
     const [error, setError] = useState<string | null>(null)
     const [userName, setUserName] = useState<string>('')
 
+    const getOrderStatusText = (dishes: DanieWZamowieniu[]) => {
+    if (dishes.length === 0) return 'Brak dań';
+    const allReady = dishes.every(d => d.status_dania_kucharza === true);
+    const allInProgress = dishes.every(d => d.status_dania_kucharza === false);
+    if (allInProgress) return 'Przyjęte';
+    if (allReady) return 'Gotowe';
+    return 'W przygotowaniu';
+};
+
+    // Dodaj funkcję do określania koloru boxa na podstawie statusów dań
+const getOrderBoxColor = (dishes: DanieWZamowieniu[]) => {
+    if (dishes.length === 0) return 'bg-gray-200'; // Brak dań
+    const allReady = dishes.every(d => d.status_dania_kucharza === true);
+    const allInProgress = dishes.every(d => d.status_dania_kucharza === false);
+    if (allInProgress) return 'bg-red-200'; // Wszystkie w przygotowaniu
+    if (allReady) return 'bg-green-200'; // Wszystkie gotowe
+    return 'bg-yellow-200'; // Przynajmniej jedno gotowe, ale nie wszystkie
+};
+
+const CATEGORY_LABELS: { [key: string]: string } = {
+    '0': 'Przystawki',
+    '1': 'Dania Główne',
+    '2': 'Desery',
+    '3': 'Napoje',
+};
+
+// Funkcja do grupowania dań po kategorii
+const groupDishesByCategory = (dishes: DanieWZamowieniu[]) => {
+    const grouped: { [key: string]: DanieWZamowieniu[] } = {
+        '0': [],
+        '1': [],
+        '2': [],
+        '3': [],
+    };
+    dishes.forEach(async dish => {
+        // domyślnie '3' jeśli brak kategorii
+        const cat = (dish.danie as any).kategoria ?? '3';
+        // Jeśli to napój i nie jest gotowy, ustaw na gotowe
+        if (cat === '3' && dish.status_dania_kucharza === false) {
+            // Wywołaj update tylko jeśli nie jest już gotowe
+            await handleAutoSetDrinkReady(dish.id_danie_zamowienie);
+            dish.status_dania_kucharza = true; // Optymistycznie ustawiamy na gotowe
+        }
+        if (grouped[cat]) {
+            grouped[cat].push(dish);
+        } else {
+            grouped['3'].push(dish);
+        }
+    });
+    return grouped;
+};
+
+// Funkcja do automatycznego ustawiania napoju na gotowe
+const handleAutoSetDrinkReady = async (id_danie_zamowienie: number) => {
+    await supabase
+        .from('danie_zamowienie')
+        .update({ status_dania_kucharza: true })
+        .eq('id_danie_zamowienie', id_danie_zamowienie);
+};
+
+
+
     const fetchKitchenOrders = useCallback(async () => {
-        setIsLoading(true)
-        setError(null)
-        const { data, error: fetchError } = await supabase
-            .from('zamowienie')
-            .select(`
-                id_zamowienia,
-                status_zamowienia,
-                stolik (numer_stolika),
-                danie_zamowienie (
-                    id_danie_zamowienie,
-                    ilosc,
-                    status_dania_kucharza,
-                    danie (id_dania, nazwa)
-                )
-            `)
-            .in('status_zamowienia', ['0', '1']) // Zamówienia 'Przyjęte' lub 'W przygotowaniu'
-            .order('id_zamowienia', { ascending: true })
+    setIsLoading(true)
+    setError(null)
+    const { data, error: fetchError } = await supabase
+        .from('zamowienie')
+        .select(`
+            id_zamowienia,
+            status_zamowienia,
+            stolik (numer_stolika),
+            danie_zamowienie (
+                id_danie_zamowienie,
+                ilosc,
+                status_dania_kucharza,
+                danie (id_dania, nazwa, kategoria)
+            )
+        `)
+        .in('status_zamowienia', ['0', '1'])
+        .order('id_zamowienia', { ascending: true })
 
         if (fetchError) {
             console.error('Błąd pobierania zamówień dla kuchni:', fetchError)
@@ -170,11 +232,7 @@ export default function KitchenPage() {
         }
     }
 
-    const getOrderStatusText = (status: string) => {
-        if (status === '0') return 'Przyjęte'
-        if (status === '1') return 'W przygotowaniu'
-        return 'Nieznany'
-    }
+    
 
     const getDishStatusText = (status: boolean) => {
         return status ? 'Gotowe do wydania' : 'W przygotowaniu'
@@ -201,62 +259,100 @@ export default function KitchenPage() {
         )
     }
 
-    return (
-        <AuthGuard requiredRole="kucharz">
-            <div className="flex h-screen">
-                {/* Main content */}
-                <div className="flex-1 p-4 md:p-8 bg-gray-100 overflow-y-auto">
-                    <header className="mb-8">
-                        <h1 className="text-3xl font-bold text-gray-800">Panel Kucharza - Aktywne Zamówienia</h1>
-                    </header>
+return (
+    <AuthGuard requiredRole="kucharz">
+        <div className="flex h-screen">
+            {/* Main content */}
+            <div className="flex-1 p-4 md:p-8 bg-gray-100 overflow-y-auto">
+                <header className="mb-8">
+                    <h1 className="text-3xl font-bold text-gray-800">Panel Kucharza - Aktywne Zamówienia</h1>
+                </header>
 
-                    {orders.length === 0 ? (
-                        <p className="text-center text-gray-500 text-xl">Brak aktywnych zamówień do przygotowania.</p>
-                    ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            {orders.map((order) => (
-                                <div key={order.id_zamowienia} className="bg-white shadow-xl rounded-lg p-6">
-                                    <div className="mb-4 pb-2 border-b border-gray-200">
-                                        <h2 className="text-xl font-semibold text-purple-700">
-                                            Zamówienie #{order.id_zamowienia}
-                                            {order.stolik && (
-                                                <span className="text-sm text-gray-600 ml-2">(Stolik: {order.stolik.numer_stolika})</span>
-                                            )}
-                                        </h2>
-                                        <p className="text-sm text-gray-500">
-                                            Status zamówienia: {getOrderStatusText(order.status_zamowienia)}
-                                        </p>
-                                    </div>
-                                    <ul className="space-y-3">
-                                        {order.danie_zamowienie.length === 0 && (
-                                            <li className="text-gray-500">Brak dań w tym zamówieniu.</li>
-                                        )}
-                                        {order.danie_zamowienie.map((dish) => (
-                                            <li key={dish.id_danie_zamowienie} className="flex justify-between items-center p-2 rounded-md bg-gray-50 hover:bg-gray-100 transition-colors">
-                                                <div>
-                                                    <p className="font-medium text-gray-800">{dish.danie.nazwa} (x{dish.ilosc})</p>
-                                                    <p className={`text-xs font-semibold ${dish.status_dania_kucharza ? 'text-green-600' : 'text-orange-500'}`}>
-                                                        {getDishStatusText(dish.status_dania_kucharza)}
-                                                    </p>
-                                                </div>
-                                                <button
-                                                    onClick={() => handleToggleDishStatus(dish.id_danie_zamowienie, dish.status_dania_kucharza)}
-                                                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors
-                                                        ${!dish.status_dania_kucharza // If false (W przygotowaniu)
-                                                            ? 'bg-green-500 hover:bg-green-600 text-white' // Show "Oznacz Gotowe"
-                                                            : 'bg-orange-500 hover:bg-orange-600 text-white' // If true (Gotowe), show "Cofnij"
-                                                        }`}
-                                                >
-                                                    {!dish.status_dania_kucharza ? 'Oznacz Gotowe' : 'Cofnij'}
-                                                </button>
-                                            </li>
-                                        ))}
-                                    </ul>
-                                </div>
-                            ))}
-                        </div>
-                    )}
+                {orders.length === 0 ? (
+                    <p className="text-center text-gray-500 text-xl">Brak aktywnych zamówień do przygotowania.</p>
+                ) : (
+                    // Sortujemy zamówienia: najpierw niegotowe, potem gotowe
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {[...orders]
+    .sort((a, b) => {
+        const aReady = a.danie_zamowienie.length > 0 && a.danie_zamowienie.every(d => d.status_dania_kucharza === true);
+        const bReady = b.danie_zamowienie.length > 0 && b.danie_zamowienie.every(d => d.status_dania_kucharza === true);
+        if (aReady === bReady) return 0;
+        if (aReady) return 1;
+        return -1;
+    })
+    .map((order) => {
+        const grouped = groupDishesByCategory(order.danie_zamowienie);
+        return (
+            <div
+                key={order.id_zamowienia}
+                className={`shadow-xl rounded-lg p-6 transition-colors ${getOrderBoxColor(order.danie_zamowienie)} flex flex-col`}
+                style={{ height: '600px', minHeight: '340px', maxHeight: '600px' }}
+            >
+                <div className="mb-4 pb-2 border-b border-gray-200">
+                    <h2 className="text-xl font-semibold text-purple-700">
+                        {order.stolik && (
+                            <span className="text-xl text-gray-600">Stolik: {order.stolik.numer_stolika}</span>
+                        )}
+                    </h2>
+                    <p className="text-base text-gray-500">
+                        Status zamówienia: {getOrderStatusText(order.danie_zamowienie)}
+                    </p>
                 </div>
+                <ul className="space-y-3 overflow-y-auto flex-1 min-h-0 pr-2">
+    {Object.entries(CATEGORY_LABELS).map(([catKey, catLabel]) => (
+        grouped[catKey].length === 0 ? null : (
+            <React.Fragment key={catKey}>
+                <li className="font-semibold text-gray-700 mt-2">{catLabel}:</li>
+                {grouped[catKey].map((dish) => (
+                    <li
+                        key={dish.id_danie_zamowienie}
+                        className="flex justify-between items-center p-2 rounded-md bg-gray-50 hover:bg-gray-100 transition-colors"
+                    >
+                        <div>
+                            <p className="font-medium text-gray-800">
+                                {dish.danie.nazwa} (x{dish.ilosc})
+                            </p>
+                            <p
+                                className={`text-xs font-semibold ${
+                                    dish.status_dania_kucharza ? 'text-green-600' : 'text-orange-500'
+                                }`}
+                            >
+                                {getDishStatusText(dish.status_dania_kucharza)}
+                            </p>
+                        </div>
+                        {/* Ukryj przycisk dla napojów */}
+                        {((dish.danie as any).kategoria ?? '3') !== '3' && (
+                            <button
+                                onClick={() =>
+                                    handleToggleDishStatus(
+                                        dish.id_danie_zamowienie,
+                                        dish.status_dania_kucharza
+                                    )
+                                }
+                                className={`w-32 px-3 py-1.5 text-xs font-medium rounded-md transition-colors
+                                    ${
+                                        !dish.status_dania_kucharza
+                                            ? 'bg-green-500 hover:bg-green-600 text-white'
+                                            : 'bg-orange-500 hover:bg-orange-600 text-white'
+                                    }`}
+                            >
+                                {!dish.status_dania_kucharza ? 'Oznacz Gotowe' : 'Cofnij'}
+                            </button>
+                        )}
+                    </li>
+                ))}
+            </React.Fragment>
+        )
+    ))}
+</ul>
+            </div>
+        );
+    })
+}
+                    </div>
+                )}
+            </div>
 
                 {/* Sidebar - taki sam jak w panelu kelnera ale bez przycisku hamburger */}
                 <div className="w-32 bg-white shadow-lg flex flex-col">

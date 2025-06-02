@@ -275,50 +275,50 @@ export default function TablePage() {
             }
             const actualStolikId = stolikData.id_stolika
             const now = new Date()
-            const timeString = now.toTimeString().split(' ')[0] // HH:MM:SS
+const timestampString = now.toISOString() // <-- pełny timestamp
 
             const calculatedTotalAmount = orderItems.reduce((sum, item) => sum + item.cena * item.ilosc, 0)
 
             let orderIdToUse: number
 
             if (currentOrder && currentOrder.id_zamowienia) {
-                orderIdToUse = currentOrder.id_zamowienia
-                const { error: updateOrderError } = await supabase
-                    .from('zamowienie')
-                    .update({
-                        suma_zamowienia: calculatedTotalAmount,
-                        // data_zamowienia: timeString, // Opcjonalnie: aktualizuj czas modyfikacji
-                        // uwagi: currentOrder.uwagi // Jeśli masz pole na uwagi w UI
-                    })
-                    .eq('id_zamowienia', orderIdToUse)
+    orderIdToUse = currentOrder.id_zamowienia
+    const { error: updateOrderError } = await supabase
+        .from('zamowienie')
+        .update({
+            suma_zamowienia: calculatedTotalAmount,
+            data_zamowienia: timestampString, // <-- aktualizuj timestamp
+            // uwagi: currentOrder.uwagi
+        })
+        .eq('id_zamowienia', orderIdToUse)
 
-                if (updateOrderError) throw updateOrderError
+    if (updateOrderError) throw updateOrderError
 
-                const { error: deleteItemsError } = await supabase
-                    .from('danie_zamowienie')
-                    .delete()
-                    .eq('id_zamowienia', orderIdToUse)
-                if (deleteItemsError) throw deleteItemsError
-            } else {
-                const newOrderPayload = {
-                    id_stolika: actualStolikId,
-                    typ_zamowienia: false,
-                    data_zamowienia: timeString,
-                    status_zamowienia: '0', // Przyjęte
-                    numer_odbioru: null,
-                    uwagi: '', // Można dodać pole w UI
-                    suma_zamowienia: calculatedTotalAmount,
-                }
-                const { data: newOrderData, error: newOrderError } = await supabase
-                    .from('zamowienie')
-                    .insert([newOrderPayload])
-                    .select('id_zamowienia')
-                    .single()
+    const { error: deleteItemsError } = await supabase
+        .from('danie_zamowienie')
+        .delete()
+        .eq('id_zamowienia', orderIdToUse)
+    if (deleteItemsError) throw deleteItemsError
+} else {
+    const newOrderPayload = {
+        id_stolika: actualStolikId,
+        typ_zamowienia: false,
+        data_zamowienia: timestampString, // <-- pełny timestamp
+        status_zamowienia: '0', // Przyjęte
+        numer_odbioru: null,
+        uwagi: '', // Można dodać pole w UI
+        suma_zamowienia: calculatedTotalAmount,
+    }
+    const { data: newOrderData, error: newOrderError } = await supabase
+        .from('zamowienie')
+        .insert([newOrderPayload])
+        .select('id_zamowienia')
+        .single()
 
-                if (newOrderError || !newOrderData) throw newOrderError || new Error("Nie udało się utworzyć zamówienia")
-                orderIdToUse = newOrderData.id_zamowienia
-                setCurrentOrder({ ...newOrderPayload, id_zamowienia: orderIdToUse })
-            }
+    if (newOrderError || !newOrderData) throw newOrderError || new Error("Nie udało się utworzyć zamówienia")
+    orderIdToUse = newOrderData.id_zamowienia
+    setCurrentOrder({ ...newOrderPayload, id_zamowienia: orderIdToUse })
+}
 
             if (orderItems.length > 0) {
                 const orderPositionsToInsert = orderItems.map(item => ({

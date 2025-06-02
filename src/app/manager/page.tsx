@@ -208,8 +208,8 @@ export default function ManagerPage() {
     // Stany dla raportów
     const [dishPopularityReport, setDishPopularityReport] = useState<ReportItem[]>([]);
     const [revenueReport, setRevenueReport] = useState<{ totalRevenue: number; orderCount: number } | null>(null);
-    const [reportStartDate, setReportStartDate] = useState('');
-    const [reportEndDate, setReportEndDate] = useState('');
+    const [reportStartDate, setReportStartDate] = useState<string>(''); // format: 'YYYY-MM-DDTHH:mm'
+    const [reportEndDate, setReportEndDate] = useState<string>(''); // format: 'YYYY-MM-DDTHH:mm'
 
     const roleMapping: { [key: string]: string } = { '0': 'Manager', '1': 'Kelner', '2': 'Kucharz' };
     const roleOptions = Object.entries(roleMapping).map(([value, label]) => ({ value, label }));
@@ -362,40 +362,59 @@ export default function ManagerPage() {
     }, [supabase]); // Removed fetchDishes from dependencies, realtime should handle it. Add if needed.
 
     // --- Logowanie Raportu ---
-    const logReportGeneration = useCallback(async (reportName: string, isFinancialType: boolean) => {
-        if (!currentManager) {
-            console.error("Manager ID not available to log report.");
-            // Można dodać alert dla użytkownika
-            // alert("Nie można zapisać informacji o raporcie - brak danych managera.");
-            return;
-        }
-        const reportData = {
-            Typ_raportu: isFinancialType, // true dla finansowego, false dla popularności
-            Data_generacji: new Date().toISOString().split('T')[0], // Format YYYY-MM-DD dla typu 'date' w SQL
-            ID_pracownika: currentManager.id_pracownika,
-            Data_start: reportStartDate || null, // Użyj wartości ze stanu
-            Data_koniec: reportEndDate || null,   // Użyj wartości ze stanu
-        };
-        const { error } = await supabase.from('Raport').insert([reportData]);
-        if (error) {
-            console.error(`Error logging ${reportName} report:`, error.message);
-        } else {
-            console.log(`${reportName} report generation logged.`);
-        }
-    }, [currentManager, reportStartDate, reportEndDate, supabase]);
+    const logReportGeneration = useCallback(
+        async (reportName: string, isFinancialType: boolean) => {
+            if (!currentManager) {
+                console.error("Manager ID not available to log report.");
+                return;
+            }
+            const reportData = {
+                typ_raportu: isFinancialType ? true : false, // 0 - popularność, 1 - przychody
+                data_generacji: new Date().toISOString().split('T')[0], // YYYY-MM-DD
+                id_pracownika: currentManager.id_pracownika,
+                data_start: reportStartDate || null,
+                data_koniec: reportEndDate || null,
+            };
+            const { error } = await supabase.from('raport').insert([reportData]);
+            if (error) {
+                console.error(`Error logging ${reportName} report:`, error.message);
+            } else {
+                console.log(`${reportName} report generation logged.`);
+            }
+        },
+        [currentManager, reportStartDate, reportEndDate, supabase]
+    );
 
     // --- Handlery Raportów ---
     const generateDishPopularityReport = useCallback(async () => {
         setIsLoading(true);
-        setDishPopularityReport([]); // Resetuj poprzedni raport
-        // Uwaga: Aktualna implementacja nie używa reportStartDate i reportEndDate do filtrowania danych
-        const { data, error } = await supabase.from('danie_zamowienie').select('ilosc, danie (id_dania, nazwa)');
+        setDishPopularityReport([]);
+
+        let query = supabase
+            .from('danie_zamowienie')
+            .select(`
+                ilosc,
+                danie (id_dania, nazwa),
+                zamowienie!inner(data_zamowienia)
+            `);
+
+        if (reportStartDate && reportEndDate) {
+            query = query
+                .gte('zamowienie.data_zamowienia', reportStartDate)
+                .lte('zamowienie.data_zamowienia', reportEndDate);
+        } else if (reportStartDate) {
+            query = query.gte('zamowienie.data_zamowienia', reportStartDate);
+        } else if (reportEndDate) {
+            query = query.lte('zamowienie.data_zamowienia', reportEndDate);
+        }
+
+        const { data, error } = await query;
         if (error) {
             alert('Błąd generowania raportu popularności dań: ' + error.message);
             setIsLoading(false); return;
         }
         if (data) {
-            type DanieWithNazwa = { nazwa: string }; // Upewnij się, że typ jest poprawny
+            type DanieWithNazwa = { nazwa: string };
             const popularity = data.reduce((acc, item: { ilosc: number | null, danie: DanieWithNazwa | DanieWithNazwa[] | null }) => {
                 let dishName = 'Nieznane danie';
                 if (item.danie) {
@@ -410,16 +429,31 @@ export default function ManagerPage() {
             }, {} as { [key: string]: number });
             const report = Object.entries(popularity).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
             setDishPopularityReport(report);
-            await logReportGeneration("Popularność Dań", false); // false bo nie jest finansowy
+            await logReportGeneration("Popularność Dań", false); // <--- ZAPIS DO BAZY
         }
         setIsLoading(false);
-    }, [supabase, logReportGeneration]); // Dodano reportStartDate, reportEndDate jeśli będą używane do filtrowania
+    }, [supabase, logReportGeneration, reportStartDate, reportEndDate]);
 
     const generateRevenueReport = useCallback(async () => {
         setIsLoading(true);
-        setRevenueReport(null); // Resetuj poprzedni raport
-        // Uwaga: Aktualna implementacja nie używa reportStartDate i reportEndDate do filtrowania danych
-        const { data, error } = await supabase.from('zamowienie').select('suma_zamowienia').eq('status_zamowienia', '2'); // '2' oznacza zrealizowane
+        setRevenueReport(null);
+
+        let query = supabase
+            .from('zamowienie')
+            .select('suma_zamowienia')
+            .eq('status_zamowienia', '2');
+
+        if (reportStartDate && reportEndDate) {
+            query = query
+                .gte('data_zamowienia', reportStartDate)
+                .lte('data_zamowienia', reportEndDate);
+        } else if (reportStartDate) {
+            query = query.gte('data_zamowienia', reportStartDate);
+        } else if (reportEndDate) {
+            query = query.lte('data_zamowienia', reportEndDate);
+        }
+
+        const { data, error } = await query;
         if (error) {
             alert('Błąd generowania raportu przychodów: ' + error.message);
             setIsLoading(false); return;
@@ -427,10 +461,10 @@ export default function ManagerPage() {
         if (data) {
             const totalRevenue = data.reduce((sum, order) => sum + (order.suma_zamowienia || 0), 0);
             setRevenueReport({ totalRevenue, orderCount: data.length });
-            await logReportGeneration("Przychody", true); // true bo finansowy
+            await logReportGeneration("Przychody", true); // <--- ZAPIS DO BAZY
         }
         setIsLoading(false);
-    }, [supabase, logReportGeneration]); // Dodano reportStartDate, reportEndDate jeśli będą używane do filtrowania
+    }, [supabase, logReportGeneration, reportStartDate, reportEndDate]);
 
 
     const handleLogout = () => {

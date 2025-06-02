@@ -14,6 +14,7 @@ interface Dish {
     cena: number
     opis: string
     dostepnosc: boolean
+    obraz?: string // <-- Dodaj pole obraz
 }
 
 interface OrderItem {
@@ -55,6 +56,10 @@ export default function TablePage() {
     const supabase = createClient()
     const params = useParams()
     const tableId = params.id as string
+
+    // Dodaj pomocniczą zmienną do rozpoznania zamówienia na wynos
+    const isTakeaway = tableId === '7';
+
     const [dishes, setDishes] = useState<Dish[]>([])
     const [selectedCategory, setSelectedCategory] = useState('Wszystkie')
     const [orderItems, setOrderItems] = useState<OrderItem[]>([]) // To jest stan UI dla tworzenia/edycji zamówienia
@@ -474,9 +479,17 @@ const timestampString = now.toISOString() // <-- pełny timestamp
             {showOrdersModal && (
                 <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">
                     <div className="bg-white p-8 rounded-lg shadow-xl min-w-[320px]">
-                        <h2 className="text-xl font-bold mb-4 text-black">Wybierz zamówienie dla stolika {tableId}</h2>
+                        <h2 className="text-xl font-bold mb-4 text-black">
+                            {isTakeaway
+                                ? 'Wybierz zamówienie na wynos'
+                                : `Wybierz zamówienie dla stolika ${tableId}`}
+                        </h2>
                         {ordersList.length === 0 ? (
-                            <div className="mb-4 text-gray-600">Brak aktywnych zamówień.</div>
+                            <div className="mb-4 text-gray-600">
+                                {isTakeaway
+                                    ? 'Brak aktywnych zamówień na wynos.'
+                                    : 'Brak aktywnych zamówień.'}
+                            </div>
                         ) : (
                             <div className="flex flex-wrap gap-2 mb-4">
                                 {ordersList.map((order) => (
@@ -485,7 +498,7 @@ const timestampString = now.toISOString() // <-- pełny timestamp
                                         className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
                                         onClick={() => typeof order.id_zamowienia === 'number' && handleSelectOrder(order.id_zamowienia)}
                                     >
-                                        Zamówienie #{order.id_zamowienia}
+                                    Zamówienie #{order.id_zamowienia}
                                     </button>
                                 ))}
                             </div>
@@ -494,7 +507,7 @@ const timestampString = now.toISOString() // <-- pełny timestamp
                             className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 w-full"
                             onClick={handleAddNewOrder}
                         >
-                            Dodaj nowe zamówienie
+                            {isTakeaway ? 'Dodaj nowe zamówienie na wynos' : 'Dodaj nowe zamówienie'}
                         </button>
                     </div>
                 </div>
@@ -553,7 +566,9 @@ const timestampString = now.toISOString() // <-- pełny timestamp
                             </svg>
                             Powrót do stolików
                         </Link>
-                        <h1 className="text-2xl font-bold text-black">Stolik {tableId}</h1>
+                        <h1 className="text-2xl font-bold text-black">
+                            {isTakeaway ? 'Na wynos' : `Stolik ${tableId}`}
+                        </h1>
                     </div>
 
                     <div className="flex space-x-2 mb-6 overflow-x-auto pb-2">
@@ -572,26 +587,56 @@ const timestampString = now.toISOString() // <-- pełny timestamp
                     </div>
 
                     {isLoading && dishes.length > 0 && <p className="text-center text-gray-600">Aktualizowanie...</p>}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                        {filteredDishes.map((dish) => (
-                            <div
-                                key={dish.id_dania}
-                                className="bg-white p-3 rounded-lg shadow hover:shadow-md transition-shadow cursor-pointer"
-                                onClick={() => addToOrder(dish)}
-                                role="button"
-                                tabIndex={0}
-                                aria-label={`Dodaj ${dish.nazwa} do zamówienia`}
-                            >
-                                <h3 className="font-semibold text-md mb-1 text-black">{dish.nazwa}</h3>
-                                {selectedCategory === 'Wszystkie' && (
-                                    <p className="text-xs text-gray-600 mb-2">{getCategoryName(dish.kategoria)}</p>
-                                )}
-                                <div className="flex justify-between items-center mt-2"> {/* Dodano mt-2 dla lepszego odstępu, jeśli kategoria jest ukryta */}
-                                    <span className="font-bold text-md text-black">{dish.cena.toFixed(2)} zł</span>
-                                </div>
-                            </div>
-                        ))}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-2 gap-y-4">
+    {filteredDishes.map((dish) => (
+        <div
+            key={dish.id_dania}
+            className="bg-white p-3 rounded-xl border border-purple-100 hover:shadow-md transition-shadow cursor-pointer flex flex-col items-center"
+            onClick={() => addToOrder(dish)}
+            role="button"
+            tabIndex={0}
+            aria-label={`Dodaj ${dish.nazwa} do zamówienia`}
+            style={{ minHeight: 220, maxWidth: 500 }}
+        >
+            <div className="w-full flex justify-center">
+                {dish.obraz ? (
+                    <img
+                        src={dish.obraz}
+                        alt={dish.nazwa}
+                        className="rounded-md object-cover"
+                        style={{
+                            width: '100%',
+                            height: '300px',
+                            maxWidth: '300px',
+                            background: '#eee',
+                        }}
+                    />
+                ) : (
+                    <div
+                        className="flex items-center justify-center rounded-md"
+                        style={{
+                            width: '100%',
+                            height: '300px',
+                            maxWidth: '300px',
+                            background: '#ededed',
+                        }}
+                    >
+                        <svg width="48" height="48" fill="none" viewBox="0 0 48 48">
+                            <rect width="48" height="48" rx="8" fill="#e5e5e5"/>
+                            <path d="M16 32l8-10 8 10" stroke="#bdbdbd" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                            <circle cx="18" cy="20" r="2" fill="#bdbdbd"/>
+                        </svg>
                     </div>
+                )}
+            </div>
+            <div className="mt-3 w-full">
+                <div className="font-semibold text-xl text-black leading-tight">{dish.nazwa}</div>
+                <div className="text-lg text-gray-500 mt-1">{getCategoryName(dish.kategoria)}</div>
+                <div className="font-bold text-lg text-black mt-2">{dish.cena.toFixed(2)} zł</div>
+            </div>
+        </div>
+    ))}
+</div>
                 </div>
                 {showNotification && (
                     <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">

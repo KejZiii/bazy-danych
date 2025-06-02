@@ -102,22 +102,33 @@ export default function WaiterPage() {
                 {/* Main content */}
                 <div className="flex-1 p-8 bg-gray-100">
                     <h1 className="text-2xl font-bold mb-6 text-black">Stoliki</h1>
+                    {/* Przycisk do zamówień na wynos */}
+                    <div className="mb-8 flex justify-center">
+                        <Link
+                            href="/waiter/table/7"
+                            className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-8 rounded-xl shadow-xl text-xl transition-colors"
+                        >
+                            Zamówienia na wynos
+                        </Link>
+                    </div>
                     <div className="grid grid-cols-3 gap-12 px-8">
-                        {tables.map((table) => (
-                            <Link
-                                href={`/waiter/table/${table.numer_stolika}`}
-                                key={table.id_stolika}
-                                className={`${getTableColor(table.status_zamowienia)} p-6 rounded-lg shadow-md cursor-pointer
-                                hover:shadow-lg transition-shadow duration-200`}
-                            >
-                                <div className="flex items-center justify-center">
-                                    <span className="text-2xl font-bold text-black">Stolik {table.numer_stolika}</span>
-                                </div>
-                                <p className="text-center text-sm text-gray-600 mt-2">
-                                    {getTableStatusText(table.status_zamowienia)}
-                                </p>
-                            </Link>
-                        ))}
+                        {tables
+                            .filter((table) => table.id_stolika !== 7)
+                            .map((table) => (
+                                <Link
+                                    href={`/waiter/table/${table.numer_stolika}`}
+                                    key={table.id_stolika}
+                                    className={`${getTableColor(table.status_zamowienia)} p-6 rounded-lg shadow-md cursor-pointer
+                                    hover:shadow-lg transition-shadow duration-200`}
+                                >
+                                    <div className="flex items-center justify-center">
+                                        <span className="text-2xl font-bold text-black">Stolik {table.numer_stolika}</span>
+                                    </div>
+                                    <p className="text-center text-sm text-gray-600 mt-2">
+                                        {getTableStatusText(table.status_zamowienia)}
+                                    </p>
+                                </Link>
+                            ))}
                     </div>
                 </div>
 

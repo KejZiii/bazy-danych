@@ -167,7 +167,7 @@ export default function OrdersInProgressPage() {
             {/* Górny pasek z powrotem i tytułem */}
             <div className="flex items-center w-full px-8 pt-6 pb-4">
                 <Link href="/waiter" className="mr-4 group">
-                    <svg className="w-7 h-7 text-black group-hover:text-purple-700 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <svg className="w-7 h-7 text-black group-hover:text-blue-700 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
                     </svg>
                 </Link>
@@ -205,48 +205,63 @@ export default function OrdersInProgressPage() {
                                         style={{ height: '80vh' }}
                                     >
                                         <div className="mb-2">
-                                            <span className="text-xs font-semibold text-black">Stolik {table.numer_stolika}</span>
+                                            <span className="text-xl font-semibold text-black">
+                                                {String(table.numer_stolika) === '7' ? 'Na wynos' : `Stolik ${table.numer_stolika}`}
+                                            </span>
                                         </div>
                                         <div className="flex-1 flex flex-col gap-3 overflow-y-auto">
-                                            {(() => {
-                                                // Zbierz wszystkie dania z zamówień tego stolika
-                                                const allDishes = table.orders.flatMap((order: any) => order.dania);
-                                                if (allDishes.length === 0) {
-                                                    return <span className="text-gray-500 text-sm">Brak pozycji</span>;
-                                                }
-                                                const grouped = groupDishesByCategory(allDishes);
-                                                return Object.entries(CATEGORY_LABELS).map(([catKey, catLabel]) =>
-                                                    grouped[catKey].length === 0 ? null : (
-                                                        <div key={catKey}>
-                                                            <div className="font-semibold text-gray-700 mt-2 mb-1">{catLabel}:</div>
-                                                            {[
-                                                                // Najpierw dania gotowe
-                                                                ...grouped[catKey].filter((item: any) => item.status_dania_kucharza),
-                                                                // Potem dania w przygotowaniu
-                                                                ...grouped[catKey].filter((item: any) => !item.status_dania_kucharza),
-                                                            ].map((item: any) => (
-                                                                <div key={item.id_danie_zamowienie} className="flex items-start justify-between mb-2">
-                                                                    <div>
-                                                                        <div className="font-semibold text-black text-sm">{item.danie?.nazwa}</div>
-                                                                        
-                                                                        <div className="text-xs font-semibold mt-1">
-                                                                            {item.status_dania_kucharza
-                                                                                ? <span className="text-green-600">Gotowe</span>
-                                                                                : <span className="text-orange-500">W przygotowaniu</span>
-                                                                            }
+                                            {table.orders.length === 0 ? (
+                                                <span className="text-gray-500 text-sm">Brak pozycji</span>
+                                            ) : (
+                                                table.orders.map((order: any, orderIdx: number) => {
+                                                    // Grupuj dania po kategorii dla tego zamówienia
+                                                    const grouped = groupDishesByCategory(order.dania);
+                                                    // Sprawdź czy jest więcej niż jedno zamówienie przy stoliku
+                                                    const showOrderHeader = table.orders.length > 1;
+                                                    // Sprawdź czy są dania w danej kategorii
+                                                    const categoriesWithDishes = Object.entries(CATEGORY_LABELS).filter(
+                                                        ([catKey]) => grouped[catKey] && grouped[catKey].length > 0
+                                                    );
+                                                    if (order.dania.length === 0) return null;
+                                                    return (
+                                                        <div key={order.id_zamowienia} className="mb-4">
+                                                            {showOrderHeader && (
+                                                                <div className="font-bold text-blue-700 mb-1">
+                                                                    Zamówienie #{order.id_zamowienia}
+                                                                </div>
+                                                            )}
+                                                            {categoriesWithDishes.map(([catKey, catLabel]) => (
+                                                                <div key={catKey} className="mb-2">
+                                                                    <div className="font-semibold text-gray-700 mt-2 mb-1">{catLabel}:</div>
+                                                                    {[
+                                                                        // Najpierw dania gotowe
+                                                                        ...grouped[catKey].filter((item: any) => item.status_dania_kucharza),
+                                                                        // Potem dania w przygotowaniu
+                                                                        ...grouped[catKey].filter((item: any) => !item.status_dania_kucharza),
+                                                                    ].map((item: any) => (
+                                                                        <div key={item.id_danie_zamowienie} className="flex items-start justify-between mb-2">
+                                                                            <div>
+                                                                                <div className="font-semibold text-black text-sm">{item.danie?.nazwa}</div>
+                                                                                <div className="text-xs font-semibold mt-1">
+                                                                                    {item.status_dania_kucharza
+                                                                                        ? <span className="text-green-600">Gotowe</span>
+                                                                                        : <span className="text-orange-500">W przygotowaniu</span>
+                                                                                    }
+                                                                                </div>
+                                                                            </div>
+                                                                            <div className="ml-2 mt-1">
+                                                                                {item.status_dania_kucharza
+                                                                                    ? <CheckIcon />
+                                                                                    : <ClockIcon />}
+                                                                            </div>
                                                                         </div>
-                                                                    </div>
-                                                                    <div className="ml-2 mt-1">
-                                                                        {item.status_dania_kucharza
-                                                                            ? <CheckIcon />
-                                                                            : <ClockIcon />}
-                                                                    </div>
+                                                                    ))}
                                                                 </div>
                                                             ))}
                                                         </div>
-                                                    )
-                                                );
-                                            })()}
+                                                    );
+                                                })
+                                            )}
                                         </div>
                                         <div className="mt-auto flex justify-center pt-2">
                                             <DownArrowIcon />

@@ -13,6 +13,7 @@ interface Danie {
     cena: number | string // string for form input, number for DB
     opis: string
     dostepnosc: boolean
+    obraz?: string // Dodaj pole na URL obrazka
 }
 
 // Define category options locally or import from a shared utility
@@ -35,6 +36,7 @@ function DishFormPageContent() {
         cena: '',
         opis: '',
         dostepnosc: true,
+        obraz: '', // Domyślnie pusty string
     });
     const [isLoading, setIsLoading] = useState(false);
     const [isEditMode, setIsEditMode] = useState(false);
@@ -60,6 +62,7 @@ function DishFormPageContent() {
                     setDishData({
                         ...data,
                         cena: String(data.cena), // Ensure cena is string for form
+                        obraz: data.obraz || '', // Ustaw pole obraz, jeśli istnieje
                     });
                 }
                 setIsLoading(false);
@@ -92,6 +95,7 @@ function DishFormPageContent() {
             ...dishData,
             cena: cenaValue,
             kategoria: String(dishData.kategoria),
+            obraz: dishData.obraz || null, // Dodaj pole obraz do zapisu
         };
 
         let error;
@@ -102,7 +106,8 @@ function DishFormPageContent() {
                 .eq('id_dania', dishId);
             error = updateError;
         } else {
-            const { id_dania, ...insertData } = dataToSubmit; // Remove id_dania for insert
+            // Remove id_dania before insert to avoid PK conflict
+            const { id_dania, ...insertData } = dataToSubmit;
             const { error: insertError } = await supabase
                 .from('danie')
                 .insert([insertData]);
@@ -152,6 +157,10 @@ function DishFormPageContent() {
                         <div>
                             <label htmlFor="cena" className="block text-sm font-medium text-gray-700 mb-1">Cena (zł)</label>
                             <input id="cena" type="number" name="cena" value={dishData.cena} onChange={handleChange} required step="0.01" min="0" className="w-full p-3 border border-gray-300 rounded-md text-black shadow-sm focus:ring-blue-500 focus:border-blue-500" />
+                        </div>
+                        <div className="md:col-span-2">
+                            <label htmlFor="obraz" className="block text-sm font-medium text-gray-700 mb-1">URL obrazka (opcjonalnie)</label>
+                            <input id="obraz" type="text" name="obraz" value={dishData.obraz} onChange={handleChange} placeholder="https://..." className="w-full p-3 border border-gray-300 rounded-md text-black shadow-sm focus:ring-blue-500 focus:border-blue-500" />
                         </div>
                         <div className="md:col-span-2">
                             <label htmlFor="opis" className="block text-sm font-medium text-gray-700 mb-1">Opis (opcjonalnie)</label>

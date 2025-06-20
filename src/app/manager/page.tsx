@@ -168,29 +168,53 @@ interface TablesViewProps {
     getTableStatusTextForManager: (status: string | null) => string;
 }
 
-const TablesView: React.FC<TablesViewProps> = ({ tables, isLoading, getTableColorForManager, getTableStatusTextForManager }) => (
-    <div>
-        <h2 className="text-2xl font-bold mb-6 text-gray-800">Podgląd Sali</h2>
-        {isLoading && tables.length === 0 && <p className="text-center text-gray-500">Ładowanie stolików...</p>}
-        {!isLoading && tables.length === 0 && <p className="text-center text-gray-500">Brak stolików do wyświetlenia.</p>}
-        <div className="grid grid-cols-3 gap-12">
-            {tables.map((table) => (
-                <div
-                    key={table.id_stolika}
-                    className={`${getTableColorForManager(table.status_aktywnego_zamowienia ?? null)} p-6 rounded-lg shadow-md cursor-default
-                                hover:shadow-lg transition-shadow duration-200 flex flex-col items-center justify-center`}
-                >
-                    <div className="flex items-center justify-center">
-                        <span className="text-2xl font-bold text-black">Stolik {table.numer_stolika}</span>
+const TablesView: React.FC<TablesViewProps> = ({ tables, isLoading, getTableColorForManager, getTableStatusTextForManager }) => {
+    // Oddziel stolik nr 7 od reszty
+    const takeawayTable = tables.find((table) => table.numer_stolika === 7);
+    const otherTables = tables.filter((table) => table.numer_stolika !== 7);
+
+    return (
+        <div>
+            <h2 className="text-2xl font-bold mb-6 text-gray-800">Podgląd Sali</h2>
+            {isLoading && tables.length === 0 && <p className="text-center text-gray-500">Ładowanie stolików...</p>}
+            {!isLoading && tables.length === 0 && <p className="text-center text-gray-500">Brak stolików do wyświetlenia.</p>}
+
+            {/* Stolik na wynos wyśrodkowany na górze */}
+            {takeawayTable && (
+                <div className="flex justify-center mb-8">
+                    <div
+                        className={`${getTableColorForManager(takeawayTable.status_aktywnego_zamowienia ?? null)} p-6 rounded-lg shadow-md flex flex-col items-center justify-center min-w-[260px]`}
+                    >
+                        <div className="flex items-center justify-center">
+                            <span className="text-2xl font-bold text-black">Zamówienia na wynos</span>
+                        </div>
+                        <p className="text-center text-sm text-gray-600 mt-2">
+                            {getTableStatusTextForManager(takeawayTable.status_aktywnego_zamowienia ?? null)}
+                        </p>
                     </div>
-                    <p className="text-center text-sm text-gray-600 mt-2">
-                        {getTableStatusTextForManager(table.status_aktywnego_zamowienia ?? null)}
-                    </p>
                 </div>
-            ))}
+            )}
+
+            {/* Pozostałe stoliki w siatce */}
+            <div className="grid grid-cols-3 gap-12">
+                {otherTables.map((table) => (
+                    <div
+                        key={table.id_stolika}
+                        className={`${getTableColorForManager(table.status_aktywnego_zamowienia ?? null)} p-6 rounded-lg shadow-md cursor-default
+                                    hover:shadow-lg transition-shadow duration-200 flex flex-col items-center justify-center`}
+                    >
+                        <div className="flex items-center justify-center">
+                            <span className="text-2xl font-bold text-black">Stolik {table.numer_stolika}</span>
+                        </div>
+                        <p className="text-center text-sm text-gray-600 mt-2">
+                            {getTableStatusTextForManager(table.status_aktywnego_zamowienia ?? null)}
+                        </p>
+                    </div>
+                ))}
+            </div>
         </div>
-    </div>
-);
+    );
+};
 
 
 export default function ManagerPage() {
@@ -321,9 +345,10 @@ export default function ManagerPage() {
         else {
             alert('Użytkownik dodany pomyślnie.');
             setNewUser({ nazwa_uzytkownika: '', pin: '', rola: '1' });
+            await fetchUsers(); // <-- DODAJ TO!
         }
         setIsLoading(false);
-    }, [newUser, supabase]);
+    }, [newUser, supabase, fetchUsers]);
 
     const handleDeleteUser = useCallback(async (userId: number, username: string) => {
         if (username === ADMIN_USERNAME) {

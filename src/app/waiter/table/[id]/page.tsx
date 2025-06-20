@@ -41,7 +41,7 @@ interface DanieZamowienie {
     id_zamowienia: number
     id_dania: number
     ilosc: number
-    status_dania_kucharza?: boolean | string // Added property, type depends on your DB (adjust if needed)
+    status_dania_kucharza?: number // zmiana z boolean | string na number
     danie?: Dish // Nested data from Supabase
 }
 
@@ -257,26 +257,27 @@ const loadOrderData = async (orderId: number) => {
     }
 
     const removeFromOrder = (dishId: number, price: number) => {
-        let itemRemovedOrDecremented = false;
         setOrderItems(prevItems => {
             const existingItem = prevItems.find(item => item.id_dania === dishId);
-            if (existingItem) {
-                itemRemovedOrDecremented = true;
-                if (existingItem.ilosc > 1) {
-                    return prevItems.map(item =>
-                        item.id_dania === dishId
-                            ? { ...item, ilosc: item.ilosc - 1 }
-                            : item
-                    );
-                }
-                return prevItems.filter(item => item.id_dania !== dishId);
-            }
-            return prevItems; // Should not happen if button is only on existing items
-        });
+            if (!existingItem) return prevItems;
 
-        if (itemRemovedOrDecremented) {
-            setTotalAmount(prev => Math.max(0, prev - price));
-        }
+            let newItems;
+            if (existingItem.ilosc > 1) {
+                newItems = prevItems.map(item =>
+                    item.id_dania === dishId
+                        ? { ...item, ilosc: item.ilosc - 1 }
+                        : item
+                );
+            } else {
+                newItems = prevItems.filter(item => item.id_dania !== dishId);
+            }
+
+            // Oblicz nową sumę na podstawie nowej listy pozycji
+            const newTotal = newItems.reduce((sum, item) => sum + item.cena * item.ilosc, 0);
+            setTotalAmount(newTotal);
+
+            return newItems;
+        });
     }
 
     const handleSaveOrder = async () => {
@@ -302,68 +303,105 @@ const loadOrderData = async (orderId: number) => {
             }
             const actualStolikId = stolikData.id_stolika
             const now = new Date()
-const timestampString = now.toISOString() // <-- pełny timestamp
+            const timestampString = now.toISOString()
 
             const calculatedTotalAmount = orderItems.reduce((sum, item) => sum + item.cena * item.ilosc, 0)
 
             let orderIdToUse: number
 
             if (currentOrder && currentOrder.id_zamowienia) {
-    orderIdToUse = currentOrder.id_zamowienia
-    const { error: updateOrderError } = await supabase
-        .from('zamowienie')
-        .update({
-            suma_zamowienia: calculatedTotalAmount,
-            data_zamowienia: timestampString, // <-- aktualizuj timestamp
-            // uwagi: currentOrder.uwagi
-        })
-        .eq('id_zamowienia', orderIdToUse)
+                orderIdToUse = currentOrder.id_zamowienia
 
-    if (updateOrderError) throw updateOrderError
-
-    const { error: deleteItemsError } = await supabase
-        .from('danie_zamowienie')
-        .delete()
-        .eq('id_zamowienia', orderIdToUse)
-    if (deleteItemsError) throw deleteItemsError
-} else {
-    const newOrderPayload = {
-        id_stolika: actualStolikId,
-        typ_zamowienia: false,
-        data_zamowienia: timestampString, // <-- pełny timestamp
-        status_zamowienia: '0', // Przyjęte
-        numer_odbioru: null,
-        uwagi: '', // Można dodać pole w UI
-        suma_zamowienia: calculatedTotalAmount,
-    }
-    const { data: newOrderData, error: newOrderError } = await supabase
-        .from('zamowienie')
-        .insert([newOrderPayload])
-        .select('id_zamowienia')
-        .single()
-
-    if (newOrderError || !newOrderData) throw newOrderError || new Error("Nie udało się utworzyć zamówienia")
-    orderIdToUse = newOrderData.id_zamowienia
-    setCurrentOrder({ ...newOrderPayload, id_zamowienia: orderIdToUse })
-}
-
-            if (orderItems.length > 0) {
-                const orderPositionsToInsert = orderItems.map(item => ({
-                    id_zamowienia: orderIdToUse,
-                    id_dania: item.id_dania,
-                    ilosc: item.ilosc,
-                    status_dania_kucharza: '0',
-                }))
-                const { error: insertItemsError } = await supabase
+                // Pobierz istniejące pozycje zamówienia z bazy
+                const { data: existingDishes, error: existingDishesError } = await supabase
                     .from('danie_zamowienie')
-                    .insert(orderPositionsToInsert)
-                if (insertItemsError) throw insertItemsError
+                    .select('id_dania, ilosc, status_dania_kucharza')
+                    .eq('id_zamowienia', orderIdToUse)
+
+                if (existingDishesError) throw existingDishesError
+
+                // Mapuj istniejące dania po id_dania
+                const existingDishesMap = new Map<number, { ilosc: number, status_dania_kucharza: number }>()
+                for (const dish of existingDishes ?? []) {
+                    existingDishesMap.set(dish.id_dania, {
+                        ilosc: dish.ilosc,
+                        status_dania_kucharza: dish.status_dania_kucharza ?? 0
+                    })
+                }
+
+                // Usuń wszystkie pozycje z zamówienia w bazie
+                const { error: deleteItemsError } = await supabase
+                    .from('danie_zamowienie')
+                    .delete()
+                    .eq('id_zamowienia', orderIdToUse)
+                if (deleteItemsError) throw deleteItemsError
+
+                // Przygotuj nowe pozycje do wstawienia, zachowując statusy istniejących dań
+                const orderPositionsToInsert = orderItems.map(item => {
+                    const existing = existingDishesMap.get(item.id_dania)
+                    return {
+                        id_zamowienia: orderIdToUse,
+                        id_dania: item.id_dania,
+                        ilosc: item.ilosc,
+                        status_dania_kucharza: existing ? existing.status_dania_kucharza : 0 // 0 dla nowych dań
+                    }
+                })
+
+                if (orderPositionsToInsert.length > 0) {
+                    const { error: insertItemsError } = await supabase
+                        .from('danie_zamowienie')
+                        .insert(orderPositionsToInsert)
+                    if (insertItemsError) throw insertItemsError
+                }
+
+                // Zaktualizuj zamówienie (np. suma, data)
+                const { error: updateOrderError } = await supabase
+                    .from('zamowienie')
+                    .update({
+                        suma_zamowienia: calculatedTotalAmount,
+                        data_zamowienia: timestampString,
+                    })
+                    .eq('id_zamowienia', orderIdToUse)
+                if (updateOrderError) throw updateOrderError
+
+            } else {
+                const newOrderPayload = {
+                    id_stolika: actualStolikId,
+                    typ_zamowienia: false,
+                    data_zamowienia: timestampString,
+                    status_zamowienia: '0',
+                    numer_odbioru: null,
+                    uwagi: '',
+                    suma_zamowienia: calculatedTotalAmount,
+                }
+                const { data: newOrderData, error: newOrderError } = await supabase
+                    .from('zamowienie')
+                    .insert([newOrderPayload])
+                    .select('id_zamowienia')
+                    .single()
+
+                if (newOrderError || !newOrderData) throw newOrderError || new Error("Nie udało się utworzyć zamówienia")
+                orderIdToUse = newOrderData.id_zamowienia
+                setCurrentOrder({ ...newOrderPayload, id_zamowienia: orderIdToUse })
+
+                if (orderItems.length > 0) {
+                    const orderPositionsToInsert = orderItems.map(item => ({
+                        id_zamowienia: orderIdToUse,
+                        id_dania: item.id_dania,
+                        ilosc: item.ilosc,
+                        status_dania_kucharza: 0,
+                    }))
+                    const { error: insertItemsError } = await supabase
+                        .from('danie_zamowienie')
+                        .insert(orderPositionsToInsert)
+                    if (insertItemsError) throw insertItemsError
+                }
             }
 
             const newTableStatus = orderItems.length > 0
             await supabase
                 .from('stolik')
-                .update({ status_stolika: newTableStatus }) // true = zajęty, false = wolny
+                .update({ status_stolika: newTableStatus })
                 .eq('id_stolika', actualStolikId)
 
             setNotificationMessage(currentOrder && currentOrder.id_zamowienia ? 'Zamówienie zaktualizowane!' : 'Zamówienie zapisane!')
@@ -387,28 +425,35 @@ const timestampString = now.toISOString() // <-- pełny timestamp
             return;
         }
 
-        // Sprawdź, czy wszystkie dania w zamówieniu są gotowe
-        if (currentOrder.danie_zamowienie && currentOrder.danie_zamowienie.length > 0) {
-            const allDishesReady = currentOrder.danie_zamowienie.every(
-                (dish) => dish.status_dania_kucharza === true
-            );
+        // Pobierz najnowsze dane zamówienia z bazy!
+        const { data: refreshedOrder, error } = await supabase
+            .from('zamowienie')
+            .select(`
+                id_zamowienia,
+                danie_zamowienie (
+                    id_danie_zamowienie,
+                    status_dania_kucharza
+                )
+            `)
+            .eq('id_zamowienia', currentOrder.id_zamowienia)
+            .maybeSingle();
 
-            if (!allDishesReady) {
-                alert("Nie wszystkie dania zostały oznaczone jako gotowe przez kucharza. Nie można zamknąć rachunku.");
-                return;
-            }
-        } else if (orderItems.length > 0 && (!currentOrder.danie_zamowienie || currentOrder.danie_zamowienie.length === 0)) {
-            // Ten przypadek może wystąpić, jeśli zamówienie jest tworzone i od razu opłacane,
-            // a dania nie zostały jeszcze zapisane w bazie z ich statusami.
-            // W typowym przepływie, najpierw zapisujesz zamówienie (handleSaveOrder),
-            // a potem dopiero je opłacasz. Jeśli chcesz pozwolić na opłacenie nowo tworzonego zamówienia
-            // bez jawnego zapisu, musisz zdecydować, jak traktować statusy dań.
-            // Dla bezpieczeństwa, można założyć, że nowo dodane dania nie są jeszcze gotowe.
-            // LUB, jeśli przepływ zawsze wymaga zapisu przed płatnością, ten warunek może nie być potrzebny.
-            alert("Zamówienie nie zostało jeszcze przetworzone przez kuchnię. Zapisz zamówienie, aby kuchnia mogła przygotować dania.");
+        if (error || !refreshedOrder) {
+            alert("Nie udało się pobrać aktualnych danych zamówienia.");
             return;
         }
 
+        const dishes = refreshedOrder.danie_zamowienie || [];
+        console.log('dania_zamowienie z bazy:', dishes); // <-- dodaj log
+
+        const allDishesServed = dishes.length === 0 || dishes.every(
+            (dish: any) => Number(dish.status_dania_kucharza) === 2
+        );
+
+        if (!allDishesServed) {
+            alert("Nie wszystkie dania zostały wydane. Nie można zamknąć rachunku.");
+            return;
+        }
 
         setIsLoading(true);
         try {
@@ -521,17 +566,26 @@ const timestampString = now.toISOString() // <-- pełny timestamp
                             {orderItems.length === 0 && <p className="text-gray-500">Brak pozycji w zamówieniu.</p>}
                             {orderItems.map((item) => (
                                 <div key={item.id_dania} className="flex justify-between items-center p-2 bg-gray-50 rounded">
-                                    <div>
-                                        <p className="font-medium text-black text-sm">{item.nazwa}</p>
-                                        <p className="text-xs text-black">{item.ilosc} x {item.cena.toFixed(2)} zł</p>
+                                    <div >
+                                        <p className="text-xl text-black text-sm ">{item.nazwa}</p>
+                                        <p className="text-lg text-black font-bold">{item.ilosc} x {item.cena.toFixed(2)} zł</p>
                                     </div>
-                                    <button
-                                        onClick={() => removeFromOrder(item.id_dania, item.cena)}
-                                        className="text-red-500 hover:text-red-700 px-2 py-1 text-lg"
-                                        aria-label={`Usuń ${item.nazwa}`}
-                                    >
-                                        &ndash;
-                                    </button>
+                                    <div className="flex items-center gap-1">
+                                        <button
+                                            onClick={() => removeFromOrder(item.id_dania, item.cena)}
+                                            className="text-red-500 hover:text-red-700 px-4 py-2 text-3xl rounded-full"
+                                            aria-label={`Usuń ${item.nazwa}`}
+                                        >
+                                            &ndash;
+                                        </button>
+                                        <button
+                                            onClick={() => addToOrder({ id_dania: item.id_dania, nazwa: item.nazwa, cena: item.cena, kategoria: '', opis: '', dostepnosc: true })}
+                                            className="text-green-600 hover:text-green-800 px-4 py-2 text-3xl rounded-full"
+                                            aria-label={`Dodaj ${item.nazwa}`}
+                                        >
+                                            +
+                                        </button>
+                                    </div>
                                 </div>
                             ))}
                         </div>

@@ -14,7 +14,7 @@ interface Danie {
 interface DanieWZamowieniu {
     id_danie_zamowienie: number
     ilosc: number
-    status_dania_kucharza: boolean // false - W przygotowaniu, true - Gotowe do wydania
+    status_dania_kucharza: number // zamiast boolean
     danie: Danie
 }
 
@@ -25,6 +25,21 @@ interface ZamowienieDlaKucharza {
     danie_zamowienie: DanieWZamowieniu[]
 }
 
+const CATEGORY_LABELS: { [key: string]: string } = {
+    '0': 'Przystawki',
+    '1': 'Dania Główne',
+    '2': 'Desery',
+    '3': 'Napoje',
+};
+
+// Dodaj mapowanie ról
+const roleMapping: { [key: string]: string } = {
+    '0': 'Manager',
+    '1': 'Kelner',
+    '2': 'Kucharz',
+    'admin': 'Admin',
+};
+
 export default function KitchenPage() {
     const supabase = createClient()
     const router = useRouter()
@@ -32,31 +47,29 @@ export default function KitchenPage() {
     const [isLoading, setIsLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
     const [userName, setUserName] = useState<string>('')
+    const [userRole, setUserRole] = useState<string>('') // Dodaj stan roli
 
     const getOrderStatusText = (dishes: DanieWZamowieniu[]) => {
     if (dishes.length === 0) return 'Brak dań';
-    const allReady = dishes.every(d => d.status_dania_kucharza === true);
-    const allInProgress = dishes.every(d => d.status_dania_kucharza === false);
+    const allReady = dishes.every(d => d.status_dania_kucharza === 1);
+    const allInProgress = dishes.every(d => d.status_dania_kucharza === 0);
+    const allServed = dishes.every(d => d.status_dania_kucharza === 2);
     if (allInProgress) return 'Przyjęte';
     if (allReady) return 'Gotowe';
+    if (allServed) return 'Wydane';
     return 'W przygotowaniu';
 };
 
     // Dodaj funkcję do określania koloru boxa na podstawie statusów dań
 const getOrderBoxColor = (dishes: DanieWZamowieniu[]) => {
     if (dishes.length === 0) return 'bg-gray-200'; // Brak dań
-    const allReady = dishes.every(d => d.status_dania_kucharza === true);
-    const allInProgress = dishes.every(d => d.status_dania_kucharza === false);
+    const allReadyOrServed = dishes.every(d => Number(d.status_dania_kucharza) === 1 || Number(d.status_dania_kucharza) === 2);
+    const allInProgress = dishes.every(d => Number(d.status_dania_kucharza) === 0);
+    const allServed = dishes.every(d => Number(d.status_dania_kucharza) === 2);
     if (allInProgress) return 'bg-red-200'; // Wszystkie w przygotowaniu
-    if (allReady) return 'bg-green-200'; // Wszystkie gotowe
+    if (allReadyOrServed) return 'bg-green-200'; // Wszystkie gotowe do wydania lub wydane
+    if (allServed) return 'bg-blue-200'; // Wszystkie wydane
     return 'bg-yellow-200'; // Przynajmniej jedno gotowe, ale nie wszystkie
-};
-
-const CATEGORY_LABELS: { [key: string]: string } = {
-    '0': 'Przystawki',
-    '1': 'Dania Główne',
-    '2': 'Desery',
-    '3': 'Napoje',
 };
 
 // Funkcja do grupowania dań po kategorii
@@ -67,14 +80,12 @@ const groupDishesByCategory = (dishes: DanieWZamowieniu[]) => {
         '2': [],
         '3': [],
     };
-    dishes.forEach(async dish => {
-        // domyślnie '3' jeśli brak kategorii
+    dishes.forEach(dish => {
         const cat = (dish.danie as any).kategoria ?? '3';
         // Jeśli to napój i nie jest gotowy, ustaw na gotowe
-        if (cat === '3' && dish.status_dania_kucharza === false) {
-            // Wywołaj update tylko jeśli nie jest już gotowe
-            await handleAutoSetDrinkReady(dish.id_danie_zamowienie);
-            dish.status_dania_kucharza = true; // Optymistycznie ustawiamy na gotowe
+        if (cat === '3' && Number(dish.status_dania_kucharza) === 0) {
+            handleAutoSetDrinkReady(dish.id_danie_zamowienie);
+            dish.status_dania_kucharza = 1; // Optymistycznie ustawiamy na gotowe
         }
         if (grouped[cat]) {
             grouped[cat].push(dish);
@@ -89,7 +100,7 @@ const groupDishesByCategory = (dishes: DanieWZamowieniu[]) => {
 const handleAutoSetDrinkReady = async (id_danie_zamowienie: number) => {
     await supabase
         .from('danie_zamowienie')
-        .update({ status_dania_kucharza: true })
+        .update({ status_dania_kucharza: 1 })
         .eq('id_danie_zamowienie', id_danie_zamowienie);
 };
 
@@ -141,6 +152,9 @@ const handleAutoSetDrinkReady = async (id_danie_zamowienie: number) => {
                 const user = JSON.parse(userData)
                 if (user.nazwa_uzytkownika) {
                     setUserName(user.nazwa_uzytkownika)
+                }
+                if (user.rola) {
+                    setUserRole(user.rola)
                 }
             }
         } catch (error) {
@@ -206,19 +220,22 @@ const handleAutoSetDrinkReady = async (id_danie_zamowienie: number) => {
 
     const handleToggleDishStatus = async (
         id_danie_zamowienie: number,
-        currentStatus: boolean
+        currentStatus: number
     ) => {
-        const newStatus = !currentStatus // Toggle boolean value
+        // 0 -> 1, 1 -> 0, 2 -> 1 (cofnij wydanie do gotowe)
+        let newStatus = 1;
+        if (Number(currentStatus) === 0) newStatus = 1;
+        else if (Number(currentStatus) === 1) newStatus = 0;
+        else if (Number(currentStatus) === 2) newStatus = 1;
         const { error: updateError } = await supabase
             .from('danie_zamowienie')
             .update({ status_dania_kucharza: newStatus })
-            .eq('id_danie_zamowienie', id_danie_zamowienie)
+            .eq('id_danie_zamowienie', id_danie_zamowienie);
 
         if (updateError) {
             console.error('Błąd aktualizacji statusu dania:', updateError)
             alert('Nie udało się zaktualizować statusu dania.')
         } else {
-            // Optimistic update
             setOrders(prevOrders =>
                 prevOrders.map(order => ({
                     ...order,
@@ -232,10 +249,12 @@ const handleAutoSetDrinkReady = async (id_danie_zamowienie: number) => {
         }
     }
 
-    
-
-    const getDishStatusText = (status: boolean) => {
-        return status ? 'Gotowe do wydania' : 'W przygotowaniu'
+    const getDishStatusText = (status: number | string) => {
+        const numStatus = Number(status);
+        if (numStatus === 0) return 'W przygotowaniu';
+        if (numStatus === 1) return 'Gotowe do wydania';
+        if (numStatus === 2) return 'Wydane';
+        return 'Nieznany status';
     }
 
     const handleLogout = () => {
@@ -275,8 +294,8 @@ return (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         {[...orders]
     .sort((a, b) => {
-        const aReady = a.danie_zamowienie.length > 0 && a.danie_zamowienie.every(d => d.status_dania_kucharza === true);
-        const bReady = b.danie_zamowienie.length > 0 && b.danie_zamowienie.every(d => d.status_dania_kucharza === true);
+        const aReady = a.danie_zamowienie.length > 0 && a.danie_zamowienie.every(d => d.status_dania_kucharza === 1);
+        const bReady = b.danie_zamowienie.length > 0 && b.danie_zamowienie.every(d => d.status_dania_kucharza === 1);
         if (aReady === bReady) return 0;
         if (aReady) return 1;
         return -1;
@@ -324,7 +343,7 @@ return (
                             </p>
                             <p
                                 className={`text-xs font-semibold ${
-                                    dish.status_dania_kucharza ? 'text-green-600' : 'text-orange-500'
+                                    Number(dish.status_dania_kucharza) === 1 ? 'text-green-600' : Number(dish.status_dania_kucharza) === 2 ? 'text-blue-600' : 'text-orange-500'
                                 }`}
                             >
                                 {getDishStatusText(dish.status_dania_kucharza)}
@@ -332,22 +351,29 @@ return (
                         </div>
                         {/* Ukryj przycisk dla napojów */}
                         {((dish.danie as any).kategoria ?? '3') !== '3' && (
-                            <button
-                                onClick={() =>
-                                    handleToggleDishStatus(
-                                        dish.id_danie_zamowienie,
-                                        dish.status_dania_kucharza
-                                    )
-                                }
-                                className={`w-32 px-3 py-1.5 text-xs font-medium rounded-md transition-colors
-                                    ${
-                                        !dish.status_dania_kucharza
-                                            ? 'bg-green-500 hover:bg-green-600 text-white'
-                                            : 'bg-orange-500 hover:bg-orange-600 text-white'
-                                    }`}
-                            >
-                                {!dish.status_dania_kucharza ? 'Oznacz Gotowe' : 'Cofnij'}
-                            </button>
+                            (() => {
+                                const status = Number(dish.status_dania_kucharza);
+                                // POKAŻ PRZYCISK TYLKO DLA status 0 lub 1
+                                if (status === 2) return null;
+                                return (
+                                    <button
+                                        onClick={() =>
+                                            handleToggleDishStatus(
+                                                dish.id_danie_zamowienie,
+                                                status
+                                            )
+                                        }
+                                        className={`w-32 px-3 py-1.5 text-xs font-medium rounded-md transition-colors
+                                            ${
+                                                status === 0
+                                                    ? 'bg-green-500 hover:bg-green-600 text-white'
+                                                    : 'bg-orange-500 hover:bg-orange-600 text-white'
+                                            }`}
+                                    >
+                                        {status === 0 ? 'Oznacz Gotowe' : 'Cofnij'}
+                                    </button>
+                                );
+                            })()
                         )}
                     </li>
                 ))}
@@ -376,7 +402,10 @@ return (
                                         d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                                 </svg>
                             </div>
-                            <span className="text-sm text-gray-700 text-center break-words w-full mb-4">{userName}</span>
+                            <span className="text-basic text-gray-700 text-center break-words w-full font-bold">{userName}</span>
+                            <span className="text-sm text-gray-500 mb-4">
+                                {roleMapping[userRole] || 'Nieznana rola'}
+                            </span>
                             <button
                                 onClick={handleLogout}
                                 className="text-xs text-red-500 hover:text-red-700 underline focus:outline-none"

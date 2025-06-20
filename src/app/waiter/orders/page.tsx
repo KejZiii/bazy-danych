@@ -72,6 +72,7 @@ export default function OrdersInProgressPage() {
     const supabase = createClient()
     const [ordersByTable, setOrdersByTable] = useState<OrderByTable[]>([])
     const [startIdx, setStartIdx] = useState(0)
+    const [loadingDishId, setLoadingDishId] = useState<number | null>(null);
 
     useEffect(() => {
         fetchOrders()
@@ -161,6 +162,32 @@ export default function OrdersInProgressPage() {
         )
     }
 
+    // Funkcja do zmiany statusu dania przez kelnera (async, z obsługą błędów i ładowania)
+    async function handleToggleDishServedStatus(id_danie_zamowienie: number, currentStatus: number) {
+        setLoadingDishId(id_danie_zamowienie);
+        try {
+            const newStatus = currentStatus === 1 ? 2 : 1;
+            const { data, error } = await supabase
+                .from('danie_zamowienie')
+                .update({ status_dania_kucharza: newStatus })
+                .eq('id_danie_zamowienie', id_danie_zamowienie)
+                .select();
+            if (error) {
+                console.error('Błąd Supabase:', error);
+                alert('Błąd podczas zmiany statusu dania!');
+            } else if (!data || data.length === 0) {
+                alert('Nie znaleziono dania do aktualizacji lub brak uprawnień.');
+            } else {
+                fetchOrders();
+            }
+        } catch (err) {
+            console.error('Wyjątek przy update:', err);
+            alert('Błąd połączenia lub nieoczekiwany błąd!');
+        } finally {
+            setLoadingDishId(null);
+        }
+    }
+
     return (
     <AuthGuard requiredRole="kelner">
         <div className="min-h-screen bg-gray-50 flex flex-col items-start justify-start">
@@ -234,28 +261,64 @@ export default function OrdersInProgressPage() {
                                                                 <div key={catKey} className="mb-2">
                                                                     <div className="font-semibold text-gray-700 mt-2 mb-1">{catLabel}:</div>
                                                                     {[
-                                                                        // Najpierw dania gotowe
-                                                                        ...grouped[catKey].filter((item: any) => item.status_dania_kucharza),
-                                                                        // Potem dania w przygotowaniu
-                                                                        ...grouped[catKey].filter((item: any) => !item.status_dania_kucharza),
-                                                                    ].map((item: any) => (
-                                                                        <div key={item.id_danie_zamowienie} className="flex items-start justify-between mb-2">
-                                                                            <div>
-                                                                                <div className="font-semibold text-black text-sm">{item.danie?.nazwa}</div>
-                                                                                <div className="text-xs font-semibold mt-1">
-                                                                                    {item.status_dania_kucharza
-                                                                                        ? <span className="text-green-600">Gotowe</span>
-                                                                                        : <span className="text-orange-500">W przygotowaniu</span>
-                                                                                    }
+                                                                        // Najpierw dania wydane
+                                                                        ...grouped[catKey].filter((item: any) => Number(item.status_dania_kucharza) === 2),
+                                                                        // Potem gotowe do wydania
+                                                                        ...grouped[catKey].filter((item: any) => Number(item.status_dania_kucharza) === 1),
+                                                                        // Potem w przygotowaniu
+                                                                        ...grouped[catKey].filter((item: any) => Number(item.status_dania_kucharza) === 0),
+                                                                    ].map((item: any, index: number) => {
+                                                                        const status = Number(item.status_dania_kucharza);
+                                                                        const dishKey = item.id_danie_zamowienia ?? `${item.danie?.nazwa}-${index}`;
+                                                                        return (
+                                                                            <div key={dishKey} className="flex items-start justify-between mb-2">
+                                                                                <div>
+                                                                                    {/* Nazwa dania + ilość */}
+                                                                                    <div className="font-semibold text-black text-sm">
+                                                                                        {item.danie?.nazwa} ({item.ilosc}x)
+                                                                                    </div>
+                                                                                    <div className="text-xs font-semibold mt-1">
+                                                                                        {status === 2 ? (
+                                                                                            <span className="text-blue-600">Wydane</span>
+                                                                                        ) : status === 1 ? (
+                                                                                            <span className="text-green-600">Gotowe do wydania</span>
+                                                                                        ) : (
+                                                                                            <span className="text-orange-500">W przygotowaniu</span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                </div>
+                                                                                <div className="ml-2 mt-1 flex items-center gap-2">
+                                                                                    {status === 2 ? (
+                                                                                        <CheckIcon />
+                                                                                    ) : status === 1 ? (
+                                                                                        <CheckIcon />
+                                                                                    ) : (
+                                                                                        <ClockIcon />
+                                                                                    )}
+                                                                                    {/* Przycisk Oznacz Wydane / Cofnij Wydanie */}
+                                                                                    {status === 1 || status === 2 ? (
+                                                                                        <button
+                                                                                            onClick={() => {
+                                                                                                if (typeof item.id_danie_zamowienie === 'number' && !isNaN(item.id_danie_zamowienie)) {
+                                                                                                    handleToggleDishServedStatus(item.id_danie_zamowienie, status)
+                                                                                                } else {
+                                                                                                    alert('Błąd: Brak poprawnego id_danie_zamowienie!');
+                                                                                                }
+                                                                                            }}
+                                                                                            disabled={loadingDishId === Number(item.id_danie_zamowienia)}
+                                                                                            className={`px-3 py-1 text-xs font-semibold rounded transition-colors focus:outline-none ${
+                                                                                                status === 1
+                                                                                                    ? 'bg-blue-500 hover:bg-blue-600 text-white'
+                                                                                                    : 'bg-orange-500 hover:bg-orange-600 text-white'
+                                                                                            }`}
+                                                                                        >
+                                                                                            {status === 1 ? 'Oznacz Wydane' : 'Cofnij Wydanie'}
+                                                                                        </button>
+                                                                                    ) : null}
                                                                                 </div>
                                                                             </div>
-                                                                            <div className="ml-2 mt-1">
-                                                                                {item.status_dania_kucharza
-                                                                                    ? <CheckIcon />
-                                                                                    : <ClockIcon />}
-                                                                            </div>
-                                                                        </div>
-                                                                    ))}
+                                                                        );
+                                                                    })}
                                                                 </div>
                                                             ))}
                                                         </div>
